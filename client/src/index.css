@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --color-parko-ivory: #FAF7F4;
+  --color-parko-charcoal: #29282B;
+  --color-parko-pink: #F5C9DB;
+  --color-parko-coral: #F45B68;
+  --color-parko-sand: #F2ECE4;
+  --color-parko-border: #E8E1DA;
+  --color-parko-muted: #716E75;
+
+  --shadow-soft: 0 4px 20px -2px rgba(41, 40, 43, 0.05);
+  --shadow-lift: 0 10px 30px -5px rgba(41, 40, 43, 0.08);
+  --shadow-coral-glow: 0 4px 14px 0 rgba(244, 91, 104, 0.35);
+}
+
+:root {
+  --parko-ivory: #FAF7F4;
+  --parko-charcoal: #29282B;
+  --parko-pink: #F5C9DB;
+  --parko-coral: #F45B68;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  background-color: var(--parko-ivory);
+  color: var(--parko-charcoal);
+  margin: 0;
+  padding: 0;
+}
+
+/* Custom Leaflet Map styling */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  font-family: inherit;
+}
+
+.custom-price-marker {
+  background-color: #29282B;
+  color: #FFFFFF;
+  border-radius: 9999px;
+  padding: 4px 10px;
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(41, 40, 43, 0.25);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  border: 2px solid #FFFFFF;
+}
+
+.custom-price-marker:hover,
+.custom-price-marker.active {
+  background-color: #F45B68;
+  color: #FFFFFF;
+  transform: scale(1.1);
+  box-shadow: 0 6px 18px rgba(244, 91, 104, 0.45);
+  z-index: 1000 !important;
+}
+
+.custom-price-marker.pending-marker {
+  background-color: #EAB308;
+  color: #29282B;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #FAF7F4;
+}
+::-webkit-scrollbar-thumb {
+  background: #E8E1DA;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #C4BCB3;
+}
