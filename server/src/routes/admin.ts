@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { pool } from '../config/database';
 import { AuthRequest, authenticateToken, requireAdmin } from '../middleware/auth';
-import { RowDataPacket } from 'mysql2';
+import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 const router = Router();
 
@@ -123,15 +123,20 @@ router.post('/listings/:id/decide', async (req: AuthRequest, res: Response) => {
     );
 
     // 2. Update or insert LISTING_VERIFICATION
-    await connection.execute(
-      `INSERT INTO LISTING_VERIFICATION (space_id, reviewer_user_id, verification_status, decision_at)
-       VALUES (?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE 
-         reviewer_user_id = VALUES(reviewer_user_id),
-         verification_status = VALUES(verification_status),
-         decision_at = NOW()`,
-      [id, adminId, status]
+    const [upd] = await connection.execute<ResultSetHeader>(
+      `UPDATE LISTING_VERIFICATION 
+       SET reviewer_user_id = ?, verification_status = ?, decision_at = NOW()
+       WHERE space_id = ?`,
+      [adminId, status, id]
     );
+
+    if (upd.affectedRows === 0) {
+      await connection.execute(
+        `INSERT INTO LISTING_VERIFICATION (space_id, reviewer_user_id, verification_status, decision_at)
+         VALUES (?, ?, ?, NOW())`,
+        [id, adminId, status]
+      );
+    }
 
     await connection.commit();
 
@@ -206,12 +211,20 @@ router.post('/users/:id/verify', async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    await pool.execute(
-      `INSERT INTO USER_VERIFICATION (user_id, verification_type, verification_status, verified_at)
-       VALUES (?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE verification_status = VALUES(verification_status), verified_at = NOW()`,
-      [id, type, status]
+    const [upd] = await pool.execute<ResultSetHeader>(
+      `UPDATE USER_VERIFICATION 
+       SET verification_type = ?, verification_status = ?, verified_at = NOW()
+       WHERE user_id = ?`,
+      [type, status, id]
     );
+
+    if (upd.affectedRows === 0) {
+      await pool.execute(
+        `INSERT INTO USER_VERIFICATION (user_id, verification_type, verification_status, verified_at)
+         VALUES (?, ?, ?, NOW())`,
+        [id, type, status]
+      );
+    }
 
     return res.json({ success: true, message: `User verification updated to ${status}` });
   } catch (err) {

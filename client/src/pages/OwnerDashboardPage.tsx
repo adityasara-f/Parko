@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { apiRequest } from '../services/api';
-import { PlusCircle, Calendar, Check, X, ShieldAlert, Clock, AlertCircle } from 'lucide-react';
+import { PlusCircle, Check, Star, Calendar, X, Plus } from 'lucide-react';
 
 export const OwnerDashboardPage: React.FC = () => {
-  const navigate = useNavigate();
   const [stats, setStats] = useState<any | null>(null);
   const [spaces, setSpaces] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
@@ -13,6 +12,18 @@ export const OwnerDashboardPage: React.FC = () => {
   // Cancellation request modal
   const [cancelModalBookingId, setCancelModalBookingId] = useState<number | null>(null);
   const [cancelReason, setCancelReason] = useState<string>('');
+
+  // Host review of driver modal
+  const [reviewBookingId, setReviewBookingId] = useState<number | null>(null);
+  const [reviewDriverName, setReviewDriverName] = useState<string>('');
+  const [rating, setRating] = useState<number>(5);
+  const [comment, setComment] = useState<string>('');
+
+  // Add availability window modal for existing space
+  const [availSpaceId, setAvailSpaceId] = useState<number | null>(null);
+  const [availDate, setAvailDate] = useState(new Date().toISOString().split('T')[0]);
+  const [availStart, setAvailStart] = useState('08:00');
+  const [availEnd, setAvailEnd] = useState('20:00');
 
   const loadData = async () => {
     setLoading(true);
@@ -75,6 +86,55 @@ export const OwnerDashboardPage: React.FC = () => {
     }
   };
 
+  // Submit Host Review of Driver (Mutual Review requirement)
+  const handleSubmitDriverReview = async () => {
+    if (!reviewBookingId) return;
+    const res = await apiRequest('/reviews', {
+      method: 'POST',
+      body: JSON.stringify({
+        bookingId: reviewBookingId,
+        rating,
+        comment,
+      }),
+    });
+
+    if (res.success) {
+      alert('Review for driver submitted successfully!');
+      setReviewBookingId(null);
+      setComment('');
+      loadData();
+    } else {
+      alert(res.error || 'Failed to submit review');
+    }
+  };
+
+  // Add Availability to existing space
+  const handleAddAvailability = async () => {
+    if (!availSpaceId) return;
+    if (availEnd <= availStart) {
+      alert('End time must be after start time');
+      return;
+    }
+
+    const res = await apiRequest(`/owner/spaces/${availSpaceId}/availability`, {
+      method: 'POST',
+      body: JSON.stringify({
+        windows: [{
+          start_time: `${availDate} ${availStart}:00`,
+          end_time: `${availDate} ${availEnd}:00`
+        }]
+      })
+    });
+
+    if (res.success) {
+      alert(res.message);
+      setAvailSpaceId(null);
+      loadData();
+    } else {
+      alert(res.error || 'Failed to add availability window');
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       {/* Header */}
@@ -119,7 +179,7 @@ export const OwnerDashboardPage: React.FC = () => {
             {stats?.pending_approvals || 0}
           </div>
           <div className="text-[11px] text-parko-muted mt-1">
-            Driver requests awaiting your call
+            Driver requests awaiting your decision
           </div>
         </div>
 
@@ -148,13 +208,17 @@ export const OwnerDashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Incoming Requests Section (Crucial state machine test) */}
+      {/* Incoming Requests Section */}
       <div className="mb-10">
         <h2 className="text-lg font-extrabold text-parko-charcoal mb-4">
-          Incoming Booking Requests
+          Incoming Booking Requests & History
         </h2>
 
-        {bookings.length === 0 ? (
+        {loading ? (
+          <div className="p-8 text-center bg-white rounded-3xl border border-parko-border text-xs text-parko-muted">
+            Loading booking requests...
+          </div>
+        ) : bookings.length === 0 ? (
           <div className="p-8 text-center bg-white rounded-3xl border border-parko-border text-xs text-parko-muted">
             No booking requests received yet.
           </div>
@@ -176,6 +240,8 @@ export const OwnerDashboardPage: React.FC = () => {
                           ? 'bg-amber-100 text-amber-800'
                           : b.booking_status === 'confirmed'
                           ? 'bg-emerald-50 text-emerald-700'
+                          : b.booking_status === 'completed'
+                          ? 'bg-blue-50 text-blue-700'
                           : 'bg-stone-100 text-stone-600'
                       }`}
                     >
@@ -190,9 +256,15 @@ export const OwnerDashboardPage: React.FC = () => {
                   <div className="text-xs text-parko-muted mt-0.5">
                     Schedule: {new Date(b.start_time).toLocaleString()} &rarr; {new Date(b.end_time).toLocaleTimeString()} &bull; Total: ₹{b.amount}
                   </div>
+
+                  {b.cancellation_reason && (
+                    <div className="text-[11px] text-red-600 font-medium mt-1">
+                      Reason: {b.cancellation_reason}
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {b.booking_status === 'pending_approval' && (
                     <>
                       <button
@@ -217,6 +289,20 @@ export const OwnerDashboardPage: React.FC = () => {
                       className="px-3 py-1.5 rounded-xl border border-parko-border text-parko-charcoal hover:bg-parko-sand text-xs font-bold"
                     >
                       Request Cancellation
+                    </button>
+                  )}
+
+                  {/* Mutual Review: Host Reviews Driver after completed booking */}
+                  {b.booking_status === 'completed' && !b.host_review_id && (
+                    <button
+                      onClick={() => {
+                        setReviewBookingId(b.booking_id);
+                        setReviewDriverName(b.driver_name);
+                      }}
+                      className="px-3 py-1.5 rounded-xl border border-parko-border bg-parko-sand/60 hover:bg-parko-sand text-parko-charcoal text-xs font-bold flex items-center gap-1"
+                    >
+                      <Star className="w-3.5 h-3.5 text-amber-500" />
+                      Review Driver
                     </button>
                   )}
                 </div>
@@ -266,6 +352,17 @@ export const OwnerDashboardPage: React.FC = () => {
                 <div>Private Address: <span className="font-medium text-parko-charcoal">{s.exact_address}</span></div>
                 <div>Approval Mode: <span className="font-medium text-parko-charcoal">{s.approval_mode}</span></div>
               </div>
+
+              <div className="pt-2 border-t border-parko-border flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setAvailSpaceId(s.space_id)}
+                  className="px-3 py-1.5 rounded-xl border border-parko-border text-xs font-bold text-parko-charcoal hover:bg-parko-sand flex items-center gap-1"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-parko-coral" />
+                  Add Availability
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -302,6 +399,136 @@ export const OwnerDashboardPage: React.FC = () => {
                 className="flex-1 py-2.5 rounded-xl bg-red-600 text-white text-xs font-bold"
               >
                 Submit to Admin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mutual Review: Host Reviews Driver Modal */}
+      {reviewBookingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-parko-charcoal/40 backdrop-blur-sm">
+          <div className="max-w-md w-full bg-white rounded-3xl p-6 border border-parko-border shadow-lift">
+            <h3 className="text-xl font-extrabold text-parko-charcoal mb-1">
+              Review Driver: {reviewDriverName}
+            </h3>
+            <p className="text-xs text-parko-muted mb-4">
+              Booking #{reviewBookingId} &bull; Provide honest host feedback on punctuality and vehicle parking.
+            </p>
+            
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-parko-charcoal mb-1">Rating</label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setRating(star)}
+                    className="p-1.5"
+                  >
+                    <Star
+                      className={`w-6 h-6 ${
+                        star <= rating
+                          ? 'text-amber-400 fill-amber-400'
+                          : 'text-stone-300'
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-5">
+              <label className="block text-xs font-bold text-parko-charcoal mb-1">Comment</label>
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder="Was the driver on time? Did they follow driveway instructions?"
+                rows={3}
+                className="w-full p-3 rounded-xl border border-parko-border text-xs focus:ring-1 focus:ring-parko-coral"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setReviewBookingId(null)}
+                className="flex-1 py-2.5 rounded-xl border border-parko-border text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmitDriverReview}
+                className="flex-1 py-2.5 rounded-xl bg-parko-charcoal text-white text-xs font-bold shadow-soft"
+              >
+                Submit Review
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Availability Modal */}
+      {availSpaceId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-parko-charcoal/40 backdrop-blur-sm">
+          <div className="max-w-md w-full bg-white rounded-3xl p-6 border border-parko-border shadow-lift">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-extrabold text-parko-charcoal">
+                Add Availability Window
+              </h3>
+              <button onClick={() => setAvailSpaceId(null)} className="p-1 text-parko-muted hover:text-parko-charcoal">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-parko-muted mb-4">
+              Add a new dated availability slot to Space #{availSpaceId} stored in <code>AVAILABILITY_WINDOW</code>.
+            </p>
+
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-bold text-parko-charcoal mb-1">Date</label>
+                <input
+                  type="date"
+                  value={availDate}
+                  onChange={(e) => setAvailDate(e.target.value)}
+                  className="w-full p-2.5 border border-parko-border rounded-xl text-xs font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-parko-charcoal mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={availStart}
+                    onChange={(e) => setAvailStart(e.target.value)}
+                    className="w-full p-2.5 border border-parko-border rounded-xl text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-parko-charcoal mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={availEnd}
+                    onChange={(e) => setAvailEnd(e.target.value)}
+                    className="w-full p-2.5 border border-parko-border rounded-xl text-xs font-semibold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setAvailSpaceId(null)}
+                className="flex-1 py-2.5 rounded-xl border border-parko-border text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddAvailability}
+                className="flex-1 py-2.5 rounded-xl bg-parko-charcoal text-white text-xs font-bold flex items-center justify-center gap-1 shadow-soft"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Window
               </button>
             </div>
           </div>

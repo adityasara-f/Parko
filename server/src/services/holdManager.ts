@@ -102,4 +102,17 @@ export class BookingHoldManager {
     const diff = Math.floor((existing.expiresAt - Date.now()) / 1000);
     return diff > 0 ? diff : 0;
   }
+
+  // Track confirmation timestamps in memory for 2-minute cancellation grace period
+  private static confirmedAtMap = new Map<number, number>();
+
+  static recordConfirmation(bookingId: number): void {
+    this.confirmedAtMap.set(bookingId, Date.now());
+  }
+
+  static isWithinConfirmationGracePeriod(bookingId: number, graceMinutes = 2): boolean {
+    const confirmedAt = this.confirmedAtMap.get(bookingId);
+    if (!confirmedAt) return false;
+    return (Date.now() - confirmedAt) <= graceMinutes * 60 * 1000;
+  }
 }

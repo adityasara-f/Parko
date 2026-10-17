@@ -7,8 +7,11 @@
     "client": "npm --prefix client run dev",
     "build:server": "npm --prefix server run build",
     "build:client": "npm --prefix client run build",
+    "build": "npm run build:server && npm run build:client",
     "start": "npm --prefix server run start",
-    "db:init": "mysql -u root -p\"Adity@2787\" < database/01_schema.sql && mysql -u root -p\"Adity@2787\" < database/02_seed.sql && mysql -u root -p\"Adity@2787\" < database/04_views.sql",
-    "db:test": "mysql -u root -p\"Adity@2787\" < database/05_tests.sql"
+    "db:init": "node server/apply_seed.js",
+    "db:test": "mysql -u root -p\"Adity@2787\" < database/05_tests.sql",
+    "test:api": "node server/test_all_workflows.js",
+    "test": "npm run db:test && npm run test:api"
   }
 }

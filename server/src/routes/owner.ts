@@ -151,12 +151,25 @@ router.post('/spaces', authenticateToken, async (req: AuthRequest, res: Response
       [spaceId, DEMO_ADMIN_USER_ID]
     );
 
-    // 4. Create default initial availability window for today + tomorrow
-    await connection.execute(
-      `INSERT INTO AVAILABILITY_WINDOW (space_id, start_time, end_time, availability_status)
-       VALUES (?, DATE_ADD(CURRENT_DATE, INTERVAL 8 HOUR), DATE_ADD(CURRENT_DATE, INTERVAL 22 HOUR), 'available')`,
-      [spaceId]
-    );
+    // 4. Create initial availability windows (supports expanded recurring schedule windows from Step 4)
+    const { windows } = req.body;
+    if (Array.isArray(windows) && windows.length > 0) {
+      for (const w of windows) {
+        if (new Date(w.end_time) > new Date(w.start_time)) {
+          await connection.execute(
+            `INSERT INTO AVAILABILITY_WINDOW (space_id, start_time, end_time, availability_status)
+             VALUES (?, ?, ?, 'available')`,
+            [spaceId, w.start_time, w.end_time]
+          );
+        }
+      }
+    } else {
+      await connection.execute(
+        `INSERT INTO AVAILABILITY_WINDOW (space_id, start_time, end_time, availability_status)
+         VALUES (?, DATE_ADD(CURRENT_DATE, INTERVAL 8 HOUR), DATE_ADD(CURRENT_DATE, INTERVAL 22 HOUR), 'available')`,
+        [spaceId]
+      );
+    }
 
     await connection.commit();
 
@@ -235,10 +248,12 @@ router.get('/bookings', authenticateToken, async (req: AuthRequest, res: Respons
         b.booking_status,
         b.amount,
         b.currency,
-        b.cancellation_reason
+        b.cancellation_reason,
+        r.review_id AS host_review_id
        FROM BOOKING b
        JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
        JOIN USER u ON b.driver_user_id = u.user_id
+       LEFT JOIN REVIEW r ON b.booking_id = r.booking_id AND r.reviewer_user_id = ps.host_user_id
        WHERE ps.host_user_id = ?
        ORDER BY b.booking_id DESC`,
       [hostId]

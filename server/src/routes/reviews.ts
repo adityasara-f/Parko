@@ -8,7 +8,8 @@ const router = Router();
 // Submit Review for a Completed Booking (Mutual Reviews)
 router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   const reviewerId = req.user!.user_id;
-  const { bookingId, rating, comment } = req.body;
+  const bookingId = req.body.bookingId ?? req.body.booking_id;
+  const { rating, comment } = req.body;
 
   if (!bookingId || !rating || rating < 1 || rating > 5) {
     return res.status(400).json({ success: false, error: 'Valid booking ID and rating between 1 and 5 required' });
@@ -17,7 +18,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     // 1. Fetch booking details
     const [bookings] = await pool.execute<RowDataPacket[]>(
-      `SELECT b.booking_id, b.space_id, b.driver_user_id, b.booking_status, ps.host_user_id
+      `SELECT b.booking_id, b.space_id, b.driver_user_id, b.booking_status, b.end_time, ps.host_user_id
        FROM BOOKING b
        JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
        WHERE b.booking_id = ?`,
@@ -30,8 +31,14 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     const booking = bookings[0];
 
+    // Auto-mark booking completed if end_time has passed
+    if (booking.booking_status === 'confirmed' && new Date(booking.end_time) <= new Date()) {
+      await pool.execute("UPDATE BOOKING SET booking_status = 'completed' WHERE booking_id = ?", [bookingId]);
+      booking.booking_status = 'completed';
+    }
+
     // Reviews can ONLY be submitted after booking completion
-    if (booking.booking_status !== 'completed' && booking.booking_status !== 'confirmed') {
+    if (booking.booking_status !== 'completed') {
       return res.status(400).json({ 
         success: false, 
         error: 'Reviews can only be submitted for completed bookings' 
@@ -57,6 +64,15 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     if (existing.length > 0) {
       return res.status(400).json({ success: false, error: 'You have already submitted a review for this booking' });
+    }
+
+    // Enforce no more than two reviews per booking
+    const [reviewCount] = await pool.execute<RowDataPacket[]>(
+      'SELECT COUNT(*) as total_reviews FROM REVIEW WHERE booking_id = ?',
+      [bookingId]
+    );
+    if ((reviewCount[0] as any).total_reviews >= 2) {
+      return res.status(400).json({ success: false, error: 'Maximum of two mutual reviews allowed per booking' });
     }
 
     // Insert Review

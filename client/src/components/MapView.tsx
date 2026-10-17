@@ -30,8 +30,16 @@ export const MapView: React.FC<MapViewProps> = ({
 }) => {
   // Create Custom HTML Marker Icon
   const createCustomIcon = (space: ParkingSpace, isSelected: boolean) => {
-    const isApproval = space.approval_mode !== 'instant';
-    const classes = `custom-price-marker ${isSelected ? 'active' : ''} ${isApproval ? 'pending-marker' : ''}`;
+    let statusClass = 'available-now-marker';
+    if (space.availability_state === 'pending_hold') {
+      statusClass = 'pending-hold-marker';
+    } else if (space.availability_state === 'available_soon') {
+      statusClass = 'available-soon-marker';
+    } else if (space.availability_state === 'unavailable') {
+      statusClass = 'unavailable-marker';
+    }
+
+    const classes = `custom-price-marker ${isSelected ? 'active' : ''} ${statusClass}`;
     const priceText = `₹${parseFloat(String(space.hourly_rate)).toFixed(0)}`;
 
     return L.divIcon({
@@ -115,19 +123,27 @@ export const MapView: React.FC<MapViewProps> = ({
         })}
       </MapContainer>
 
-      {/* Floating Map Legend */}
-      <div className="absolute bottom-4 left-4 z-20 bg-white/90 backdrop-blur-md px-3 py-2 rounded-xl border border-parko-border shadow-soft text-[11px] flex items-center gap-3">
+      {/* Floating Map Legend (Prompt requirement: Available now, soon, pending hold, unavailable, selected) */}
+      <div className="absolute bottom-4 left-4 z-20 bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-2xl border border-parko-border shadow-soft text-[11px] flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-parko-charcoal" />
-          <span className="font-semibold text-parko-charcoal">Instant</span>
+          <span className="font-semibold text-parko-charcoal">Available Now</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-sky-600" />
+          <span className="font-semibold text-sky-800">Soon (&le;15m)</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-          <span className="font-semibold text-parko-charcoal">Approval Req</span>
+          <span className="font-semibold text-amber-900">Pending Hold</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-stone-400" />
+          <span className="font-semibold text-stone-500">Unavailable</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-parko-coral" />
-          <span className="font-semibold text-parko-coral font-bold">Selected</span>
+          <span className="font-bold text-parko-coral">Selected</span>
         </div>
       </div>
     </div>

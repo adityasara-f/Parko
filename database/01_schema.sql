@@ -68,6 +68,7 @@ CREATE TABLE AVAILABILITY_WINDOW (
     availability_status ENUM('available', 'partially_booked', 'booked', 'cancelled') NOT NULL DEFAULT 'available',
     CONSTRAINT fk_avail_space FOREIGN KEY (space_id) REFERENCES PARKING_SPACE(space_id) ON DELETE CASCADE,
     CONSTRAINT chk_avail_times CHECK (end_time > start_time),
+    UNIQUE KEY unq_avail_space (availability_id, space_id),
     INDEX idx_avail_window (space_id, start_time, end_time, availability_status)
 ) ENGINE=InnoDB;
 
@@ -86,7 +87,7 @@ CREATE TABLE BOOKING (
     cancellation_reason VARCHAR(255),
     CONSTRAINT fk_booking_space FOREIGN KEY (space_id) REFERENCES PARKING_SPACE(space_id) ON DELETE RESTRICT,
     CONSTRAINT fk_booking_driver FOREIGN KEY (driver_user_id) REFERENCES USER(user_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_booking_avail FOREIGN KEY (availability_id) REFERENCES AVAILABILITY_WINDOW(availability_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_booking_avail_space FOREIGN KEY (availability_id, space_id) REFERENCES AVAILABILITY_WINDOW(availability_id, space_id) ON DELETE RESTRICT,
     CONSTRAINT chk_booking_times CHECK (end_time > start_time),
     INDEX idx_booking_space_times (space_id, start_time, end_time, booking_status),
     INDEX idx_booking_driver (driver_user_id, booking_status)

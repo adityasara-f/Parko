@@ -9,7 +9,10 @@ const router = Router();
 // Create Booking Request / Hold (Instant or Owner-Approved)
 router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   const driverId = req.user!.user_id;
-  const { spaceId, availabilityId, startTime, endTime } = req.body;
+  const spaceId = req.body.spaceId ?? req.body.space_id;
+  const availabilityId = req.body.availabilityId ?? req.body.availability_id;
+  const startTime = req.body.startTime ?? req.body.start_time;
+  const endTime = req.body.endTime ?? req.body.end_time;
 
   if (!spaceId || !availabilityId || !startTime || !endTime) {
     return res.status(400).json({ success: false, error: 'Missing required booking fields' });
@@ -47,6 +50,16 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     if (space.host_user_id === driverId) {
       await connection.rollback();
       return res.status(400).json({ success: false, error: 'Hosts cannot book their own parking space' });
+    }
+
+    // Immediate booking rule: starting within 15 minutes cannot use 30-min owner approval
+    const minutesToStart = (start.getTime() - Date.now()) / (1000 * 60);
+    if (minutesToStart <= 15 && space.approval_mode === 'manual_30min') {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        error: 'This space uses standard 30-minute owner approval and cannot be reserved for immediate parking (< 15 minutes). Please choose an instant-book space, a fast 5/10-minute approval space, or select a later arrival time.'
+      });
     }
 
     // 2. Validate availability window belongs to this space and covers requested interval
@@ -324,12 +337,14 @@ router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Respons
 
     await connection.commit();
 
-    // Clear runtime hold timer
+    // Clear runtime hold timer and record confirmation time for 2-minute cancellation grace period
     BookingHoldManager.clearHold(Number(id));
+    BookingHoldManager.recordConfirmation(Number(id));
 
     return res.json({
       success: true,
       message: 'Demo payment completed successfully. Booking is confirmed!',
+      booking_status: 'confirmed',
       payment: {
         reference: paymentRef,
         amount: booking.amount,
@@ -392,13 +407,16 @@ router.post('/:id/cancel', authenticateToken, async (req: AuthRequest, res: Resp
       const now = new Date();
       const startTime = new Date(booking.start_time);
       const hoursUntilStart = (startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+      const isWithinGrace = BookingHoldManager.isWithinConfirmationGracePeriod(Number(id), 2);
 
       let cancellationPolicyNote = 'Standard Cancellation';
 
       if (hoursUntilStart >= 2) {
         cancellationPolicyNote = 'Free cancellation (>2 hours prior to arrival)';
+      } else if (isWithinGrace) {
+        cancellationPolicyNote = 'Free cancellation (Within 2-minute post-confirmation grace period)';
       } else {
-        cancellationPolicyNote = 'Late cancellation (<2 hours prior to arrival)';
+        cancellationPolicyNote = 'Late cancellation (<2 hours prior to arrival, grace period elapsed)';
       }
 
       const fullReason = `${cancellationPolicyNote} - ${reason}`;
@@ -475,6 +493,7 @@ router.get('/:id/access', authenticateToken, async (req: AuthRequest, res: Respo
 
     return res.json({
       success: true,
+      access_instructions: detail.access_instructions,
       access: {
         booking_id: detail.booking_id,
         exact_address: detail.exact_address,

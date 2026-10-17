@@ -32,7 +32,34 @@ router.get('/search', async (req: Request, res: Response) => {
         c.currency,
         u.name AS host_name,
         COALESCE(ROUND(AVG(r.rating), 1), 0.0) AS average_rating,
-        COUNT(r.review_id) AS total_reviews
+        COUNT(DISTINCT r.review_id) AS total_reviews,
+        CASE
+          WHEN EXISTS (
+            SELECT 1 FROM BOOKING b2 
+            WHERE b2.space_id = ps.space_id 
+              AND b2.booking_status IN ('pending_approval', 'pending_payment')
+              AND NOW() BETWEEN b2.start_time AND b2.end_time
+          ) THEN 'pending_hold'
+          WHEN EXISTS (
+            SELECT 1 FROM AVAILABILITY_WINDOW aw 
+            WHERE aw.space_id = ps.space_id 
+              AND aw.availability_status = 'available'
+              AND NOW() BETWEEN aw.start_time AND aw.end_time
+              AND NOT EXISTS (
+                SELECT 1 FROM BOOKING b3 
+                WHERE b3.space_id = ps.space_id 
+                  AND b3.booking_status IN ('confirmed', 'cancellation_requested')
+                  AND NOW() BETWEEN b3.start_time AND b3.end_time
+              )
+          ) THEN 'available_now'
+          WHEN EXISTS (
+            SELECT 1 FROM AVAILABILITY_WINDOW aw 
+            WHERE aw.space_id = ps.space_id 
+              AND aw.availability_status = 'available'
+              AND aw.start_time BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 15 MINUTE)
+          ) THEN 'available_soon'
+          ELSE 'unavailable'
+        END AS availability_state
       FROM PARKING_SPACE ps
       JOIN CITY c ON ps.city_id = c.city_id
       JOIN USER u ON ps.host_user_id = u.user_id

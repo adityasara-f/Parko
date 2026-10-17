@@ -56,16 +56,29 @@ body {
 
 .custom-price-marker:hover,
 .custom-price-marker.active {
-  background-color: #F45B68;
-  color: #FFFFFF;
-  transform: scale(1.1);
-  box-shadow: 0 6px 18px rgba(244, 91, 104, 0.45);
+  background-color: #F45B68 !important;
+  color: #FFFFFF !important;
+  transform: scale(1.12);
+  box-shadow: 0 6px 18px rgba(244, 91, 104, 0.5);
   z-index: 1000 !important;
 }
 
-.custom-price-marker.pending-marker {
+.custom-price-marker.pending-hold-marker {
   background-color: #EAB308;
-  color: #29282B;
+  color: #1F2937;
+  border-color: #FEF08A;
+}
+
+.custom-price-marker.available-soon-marker {
+  background-color: #0284C7;
+  color: #FFFFFF;
+  border-color: #BAE6FD;
+}
+
+.custom-price-marker.unavailable-marker {
+  background-color: #716E75;
+  color: #E5E7EB;
+  opacity: 0.85;
 }
 
 /* Custom Scrollbar */

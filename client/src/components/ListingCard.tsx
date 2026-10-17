@@ -16,6 +16,7 @@ export interface ParkingSpace {
   host_name?: string;
   average_rating: string | number;
   total_reviews: number;
+  availability_state?: 'available_now' | 'available_soon' | 'pending_hold' | 'unavailable';
 }
 
 interface ListingCardProps {
@@ -67,6 +68,32 @@ export const ListingCard: React.FC<ListingCardProps> = ({
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-parko-sand text-[11px] font-semibold text-parko-charcoal">
               {formatVehicle(space.vehicle_category)}
             </span>
+
+            {/* Availability State Badge */}
+            {space.availability_state === 'available_now' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                Available Now
+              </span>
+            )}
+            {space.availability_state === 'available_soon' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-100 text-sky-800 text-[10px] font-extrabold">
+                <Clock className="w-2.5 h-2.5 text-sky-600" />
+                Available Soon (&le;15m)
+              </span>
+            )}
+            {space.availability_state === 'pending_hold' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 text-[10px] font-extrabold">
+                <Clock className="w-2.5 h-2.5 text-amber-600" />
+                Pending Hold
+              </span>
+            )}
+            {space.availability_state === 'unavailable' && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-stone-100 text-stone-500 text-[10px] font-semibold">
+                Unavailable Now
+              </span>
+            )}
+
             {space.approval_mode === 'instant' ? (
               <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md bg-emerald-50 text-[11px] font-bold text-emerald-700">
                 <Zap className="w-3 h-3 text-emerald-500 fill-emerald-500" />

@@ -14,14 +14,14 @@ INSERT INTO CITY (city_id, city_name, region, country, timezone, currency) VALUE
 -- Let's use standard bcrypt hash for 'password123': $2a$10$Xo1n67oR0Y2b1Y2e5e4nYe8Pq3o5W8v4X5o5Y5e4e5e4e5e4e5e4e
 -- Actually let's use a verified bcrypt hash for 'password123': $2b$10$oX5iA5fUqg05XmDfg7Z7Qe3Hj4E2Nl7IeX3mF5Xj2y6T8gY8Y8e2O
 INSERT INTO USER (user_id, name, email, phone, password_hash, account_status, created_at) VALUES
-(1, 'Aditya Saraf (Admin)', 'admin@parko.com', '+919876543210', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 30 DAY),
-(2, 'Kavitha Raman (Owner)', 'kavitha@parko.com', '+919876543211', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 25 DAY),
-(3, 'Rajesh Kumar (Owner)', 'rajesh@parko.com', '+919876543212', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 20 DAY),
-(4, 'Dr. Arulmozhi (Owner)', 'arul@parko.com', '+919876543213', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 18 DAY),
-(5, 'Suresh Mani (Driver)', 'suresh@parko.com', '+919876543214', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 15 DAY),
-(6, 'Priya Sundaram (Driver)', 'priya@parko.com', '+919876543215', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 10 DAY),
-(7, 'Vikram Chandran (Driver)', 'vikram@parko.com', '+919876543216', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 5 DAY),
-(8, 'Deepa Mohan (Host/Driver)', 'deepa@parko.com', '+919876543217', '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'active', NOW() - INTERVAL 2 DAY);
+(1, 'Aditya Saraf (Admin)', 'admin@parko.com', '+919876543210', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 30 DAY),
+(2, 'Kavitha Raman (Owner)', 'kavitha@parko.com', '+919876543211', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 25 DAY),
+(3, 'Rajesh Kumar (Owner)', 'rajesh@parko.com', '+919876543212', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 20 DAY),
+(4, 'Dr. Arulmozhi (Owner)', 'arul@parko.com', '+919876543213', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 18 DAY),
+(5, 'Suresh Mani (Driver)', 'suresh@parko.com', '+919876543214', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 15 DAY),
+(6, 'Priya Sundaram (Driver)', 'priya@parko.com', '+919876543215', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 10 DAY),
+(7, 'Vikram Chandran (Driver)', 'vikram@parko.com', '+919876543216', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 5 DAY),
+(8, 'Deepa Mohan (Host/Driver)', 'deepa@parko.com', '+919876543217', '$2a$10$y1uxqYvlQ6dwj/YJJ8fE6u3958M/hTt1KZunyD69wXLIu64.Y4dda', 'active', NOW() - INTERVAL 2 DAY);
 
 -- 3. USER_VERIFICATION
 INSERT INTO USER_VERIFICATION (verification_id, user_id, verification_type, verification_status, verified_at) VALUES

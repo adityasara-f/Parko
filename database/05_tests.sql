@@ -24,12 +24,13 @@ FROM (
     GROUP BY c.table_name
 ) AS t;
 
--- Test 3: Foreign Key and Cascade Check - Verify private location references parking space
+-- Test 3: Foreign Key and Cascade Check - Verify every parking space has a private location record
 SELECT 
-    CASE WHEN COUNT(*) = 15 THEN 'PASS: All 15 parking spaces have private location records'
-         ELSE 'FAIL: Private space locations missing' END AS test_result
-FROM PRIVATE_SPACE_LOCATION psl
-JOIN PARKING_SPACE ps ON psl.space_id = ps.space_id;
+    CASE WHEN COUNT(*) = 0 THEN 'PASS: All parking spaces have corresponding private location records'
+         ELSE 'FAIL: Parking spaces without private locations found' END AS test_result
+FROM PARKING_SPACE ps
+LEFT JOIN PRIVATE_SPACE_LOCATION psl ON ps.space_id = psl.space_id
+WHERE psl.space_id IS NULL;
 
 -- Test 4: Positive booking duration constraint check
 SELECT 
