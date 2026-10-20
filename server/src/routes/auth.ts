@@ -30,12 +30,32 @@ router.post('/otp/request', async (req: Request, res: Response) => {
 
   otpStore.set(phone, { code: demoOtp, phone, expiresAt });
 
-  return res.json({
-    success: true,
-    message: 'Demo OTP generated successfully',
-    demo_otp: demoOtp, // Displayed in UI for simulated course demonstration
-    expires_in_seconds: 300
-  });
+  try {
+    const [existing] = await pool.execute<RowDataPacket[]>(
+      'SELECT user_id, name FROM USER WHERE phone = ?',
+      [phone]
+    );
+
+    const userExists = existing.length > 0;
+    const userName = userExists ? existing[0].name : null;
+
+    return res.json({
+      success: true,
+      message: 'Demo OTP generated successfully',
+      demo_otp: demoOtp, // Displayed in UI for simulated course demonstration
+      user_exists: userExists,
+      name: userName,
+      expires_in_seconds: 300
+    });
+  } catch (err) {
+    return res.json({
+      success: true,
+      message: 'Demo OTP generated successfully',
+      demo_otp: demoOtp,
+      user_exists: false,
+      expires_in_seconds: 300
+    });
+  }
 });
 
 // Verify Demo OTP and Sign In / Register

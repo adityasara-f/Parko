@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '../services/api';
 import { ListingCard, ParkingSpace } from '../components/ListingCard';
 import { MapView } from '../components/MapView';
 import { SearchFilters } from '../components/SearchFilters';
 import { WelcomeOverlay } from '../components/WelcomeOverlay';
-import { Split, MapPin, RefreshCw, X, ChevronRight, Zap, ShieldCheck } from 'lucide-react';
+import { Split, MapPin, RefreshCw, X, ChevronRight, Zap, Clock } from 'lucide-react';
 
 export const SearchMapPage: React.FC = () => {
   const navigate = useNavigate();
@@ -13,10 +13,13 @@ export const SearchMapPage: React.FC = () => {
   const [spaces, setSpaces] = useState<ParkingSpace[]>([]);
   const [selectedSpace, setSelectedSpace] = useState<ParkingSpace | null>(null);
   const [loading, setLoading] = useState(true);
-  const [splitRatio, setSplitRatio] = useState<number>(45); // Left panel 45%, map 55%
+  const [immediateBooking, setImmediateBooking] = useState<boolean>(true);
+  const [driverLocation, setDriverLocation] = useState<[number, number] | null>(null);
+  const [splitRatio, setSplitRatio] = useState<number>(45);
   const [activeTabMobile, setActiveTabMobile] = useState<'list' | 'map'>('list');
+  const [currentFilters, setCurrentFilters] = useState<any>({});
 
-  const fetchSpaces = async (filterParams: any = {}) => {
+  const fetchSpaces = useCallback(async (filterParams: any = {}, immediate: boolean = immediateBooking) => {
     setLoading(true);
     try {
       const query = new URLSearchParams();
@@ -27,9 +30,18 @@ export const SearchMapPage: React.FC = () => {
 
       const res = await apiRequest(`/spaces/search?${query.toString()}`);
       if (res.success && res.spaces) {
-        setSpaces(res.spaces);
-        if (res.spaces.length > 0 && !selectedSpace) {
-          setSelectedSpace(res.spaces[0]);
+        let filtered = res.spaces as ParkingSpace[];
+
+        // Immediate mode: filter out spaces that require 30‑min owner approval
+        if (immediate) {
+          filtered = filtered.filter(s => s.approval_mode !== 'manual_30min');
+        }
+
+        // Never show past-only spaces: hide spaces whose only availability is already ended
+        // (the backend already filters end_time >= NOW on windows, so this is a safety belt)
+        setSpaces(filtered);
+        if (filtered.length > 0 && !selectedSpace) {
+          setSelectedSpace(filtered[0]);
         }
       }
     } catch (err) {
@@ -37,14 +49,36 @@ export const SearchMapPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [immediateBooking, selectedSpace]);
+
+  // Re-fetch whenever the toggle changes
+  useEffect(() => {
+    fetchSpaces(currentFilters, immediateBooking);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [immediateBooking]);
 
   useEffect(() => {
     fetchSpaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Get driver geolocation on mount
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => setDriverLocation([pos.coords.latitude, pos.coords.longitude]),
+        err => console.warn('Geolocation error:', err)
+      );
+    }
+  }, []);
+
+  const handleSearch = (filters: any) => {
+    setCurrentFilters(filters);
+    fetchSpaces(filters, immediateBooking);
+  };
+
   const handleBook = (space: ParkingSpace) => {
-    navigate(`/book/${space.space_id}`);
+    navigate(`/book/${space.space_id}?immediate=${immediateBooking}`);
   };
 
   return (
@@ -100,7 +134,7 @@ export const SearchMapPage: React.FC = () => {
 
               <div className="flex items-center gap-1.5">
                 <button
-                  onClick={() => fetchSpaces()}
+                  onClick={() => fetchSpaces(currentFilters, immediateBooking)}
                   title="Refresh results"
                   className="p-2 rounded-xl bg-white border border-parko-border hover:bg-parko-sand text-parko-charcoal transition-colors shadow-xs"
                 >
@@ -116,7 +150,44 @@ export const SearchMapPage: React.FC = () => {
               </div>
             </div>
 
-            <SearchFilters onSearch={fetchSpaces} />
+            {/* Immediate / Later toggle — lives INSIDE the filter area */}
+            <div className="mb-3 flex items-center gap-2 bg-white rounded-2xl border border-parko-border p-3">
+              <span className="text-[11px] font-bold text-parko-muted uppercase tracking-wider mr-1">
+                When:
+              </span>
+              <button
+                id="toggle-immediate"
+                onClick={() => setImmediateBooking(true)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-bold transition-all ${
+                  immediateBooking
+                    ? 'bg-parko-coral text-white shadow-sm'
+                    : 'bg-parko-sand/60 text-parko-charcoal hover:bg-parko-sand'
+                }`}
+              >
+                <Zap className="w-3 h-3" />
+                Now (Immediate)
+              </button>
+              <button
+                id="toggle-later"
+                onClick={() => setImmediateBooking(false)}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-xl text-xs font-bold transition-all ${
+                  !immediateBooking
+                    ? 'bg-parko-charcoal text-white shadow-sm'
+                    : 'bg-parko-sand/60 text-parko-charcoal hover:bg-parko-sand'
+                }`}
+              >
+                <Clock className="w-3 h-3" />
+                Later / Scheduled
+              </button>
+            </div>
+
+            {immediateBooking && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5 mb-2 font-semibold">
+                Showing Instant Book &amp; Fast Approval spaces only (30-min approval spaces hidden)
+              </p>
+            )}
+
+            <SearchFilters onSearch={handleSearch} />
           </div>
 
           {/* Listings List (Scrollable) */}
@@ -131,7 +202,9 @@ export const SearchMapPage: React.FC = () => {
                 <MapPin className="w-8 h-8 text-parko-muted mx-auto mb-2" />
                 <h3 className="font-bold text-sm text-parko-charcoal">No spaces found</h3>
                 <p className="text-xs text-parko-muted mt-1">
-                  Try broadening your price limit or clearing vehicle filters.
+                  {immediateBooking
+                    ? 'No immediate spaces available. Try switching to "Later / Scheduled" to see all listings.'
+                    : 'Try broadening your price limit or clearing vehicle filters.'}
                 </p>
               </div>
             ) : (
@@ -160,8 +233,9 @@ export const SearchMapPage: React.FC = () => {
             selectedSpace={selectedSpace}
             onSelectSpace={(s) => {
               setSelectedSpace(s);
-              setActiveTabMobile('list'); // On mobile click, reveal card
+              setActiveTabMobile('list');
             }}
+            driverLocation={driverLocation}
           />
 
           {/* Selected Floating Preview Overlay on Map */}

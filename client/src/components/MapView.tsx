@@ -9,6 +9,7 @@ interface MapViewProps {
   selectedSpace: ParkingSpace | null;
   onSelectSpace: (space: ParkingSpace) => void;
   routePreviewCoords?: [number, number] | null;
+  driverLocation?: [number, number] | null;
   center?: [number, number];
 }
 
@@ -21,7 +22,7 @@ const MapRecenter: React.FC<{ coords: [number, number] }> = ({ coords }) => {
   return null;
 };
 
-export const MapView: React.FC<MapViewProps> = ({
+export const MapView: React.FC<MapViewProps> = ({ driverLocation,
   spaces,
   selectedSpace,
   onSelectSpace,
@@ -50,6 +51,14 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   };
 
+  // Driver location marker (distinct blue dot)
+  const driverIcon = L.divIcon({
+    className: 'driver-location-marker',
+    html: `<div style="width:16px;height:16px;background:#1e90ff;border-radius:50%;border:2px solid white;"></div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+  });
+
   return (
     <div className="w-full h-full relative">
       <MapContainer
@@ -72,7 +81,11 @@ export const MapView: React.FC<MapViewProps> = ({
           />
         )}
 
-        {/* Route Preview Polyline (from user / center to selected destination) */}
+        {driverLocation && (
+          <Marker position={driverLocation} icon={driverIcon} />
+        )}
+
+{/* Route Preview Polyline (from user / center to selected destination) */}
         {routePreviewCoords && selectedSpace && (
           <Polyline
             positions={[

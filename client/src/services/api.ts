@@ -1,11 +1,10 @@
 
-const API_BASE =
-  import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 export async function apiRequest<T = any>(
   endpoint: string,
   options: RequestInit = {}
-): Promise<{ success: boolean; data?: T; error?: string; [key: string]: any }> {
+): Promise<{ success: boolean; data?: T; error?: string;[key: string]: any }> {
   try {
     const normalizedEndpoint = endpoint.startsWith('/')
       ? endpoint

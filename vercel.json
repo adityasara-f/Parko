@@ -8,7 +8,7 @@
             "root": "server/",
             "framework": "express",
             "entrypoint": "src/index.ts",
-            "installCommand": "npm install"
+            "installCommand": "npm install --include=dev"
         }
     },
     "rewrites": [

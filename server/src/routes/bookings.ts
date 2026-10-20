@@ -6,6 +6,11 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 const router = Router();
 
+function toMySqlDatetime(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 // Create Booking Request / Hold (Instant or Owner-Approved)
 router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   const driverId = req.user!.user_id;
@@ -14,17 +19,28 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   const startTime = req.body.startTime ?? req.body.start_time;
   const endTime = req.body.endTime ?? req.body.end_time;
 
-  if (!spaceId || !availabilityId || !startTime || !endTime) {
-    return res.status(400).json({ success: false, error: 'Missing required booking fields' });
+  if (!spaceId || !startTime || !endTime) {
+    return res.status(400).json({ success: false, error: 'Missing required booking fields (spaceId, startTime, endTime)' });
   }
 
   const start = new Date(startTime);
   const end = new Date(endTime);
 
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return res.status(400).json({ success: false, error: 'Invalid start or end time format' });
+  }
+
   if (end <= start) {
     return res.status(400).json({ success: false, error: 'End time must be strictly after start time' });
   }
 
+  // Prevent booking entirely in the past
+  if (end.getTime() < Date.now() - 5 * 60 * 1000) {
+    return res.status(400).json({ success: false, error: 'Cannot book a parking slot in the past' });
+  }
+
+  const formattedStart = toMySqlDatetime(start);
+  const formattedEnd = toMySqlDatetime(end);
   const durationHours = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60)));
 
   const connection = await pool.getConnection();
@@ -62,26 +78,50 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // 2. Validate availability window belongs to this space and covers requested interval
-    const [windows] = await connection.execute<RowDataPacket[]>(
-      `SELECT availability_id, start_time, end_time, availability_status 
-       FROM AVAILABILITY_WINDOW 
-       WHERE availability_id = ? AND space_id = ? FOR UPDATE`,
-      [availabilityId, spaceId]
-    );
+    // 2. Validate availability window or auto-match covering window
+    let activeAvailabilityId = availabilityId ? Number(availabilityId) : null;
+    let windowRecord: any = null;
 
-    if (windows.length === 0 || windows[0].availability_status !== 'available') {
-      await connection.rollback();
-      return res.status(400).json({ success: false, error: 'Selected availability window is invalid or unavailable' });
+    if (activeAvailabilityId) {
+      const [windows] = await connection.execute<RowDataPacket[]>(
+        `SELECT availability_id, start_time, end_time, availability_status 
+         FROM AVAILABILITY_WINDOW 
+         WHERE availability_id = ? AND space_id = ? FOR UPDATE`,
+        [activeAvailabilityId, spaceId]
+      );
+      if (windows.length > 0 && windows[0].availability_status === 'available') {
+        const wStart = new Date(windows[0].start_time);
+        const wEnd = new Date(windows[0].end_time);
+        if (start >= wStart && end <= wEnd) {
+          windowRecord = windows[0];
+        }
+      }
     }
 
-    const window = windows[0];
-    const windowStart = new Date(window.start_time);
-    const windowEnd = new Date(window.end_time);
+    if (!windowRecord) {
+      const [matching] = await connection.execute<RowDataPacket[]>(
+        `SELECT availability_id, start_time, end_time, availability_status 
+         FROM AVAILABILITY_WINDOW 
+         WHERE space_id = ? 
+           AND availability_status = 'available'
+           AND start_time <= ? 
+           AND end_time >= ?
+         ORDER BY availability_id ASC
+         LIMIT 1 FOR UPDATE`,
+        [spaceId, formattedStart, formattedEnd]
+      );
+      if (matching.length > 0) {
+        windowRecord = matching[0];
+        activeAvailabilityId = windowRecord.availability_id;
+      }
+    }
 
-    if (start < windowStart || end > windowEnd) {
+    if (!windowRecord) {
       await connection.rollback();
-      return res.status(400).json({ success: false, error: 'Booking interval falls outside of the host availability window' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Requested booking interval falls outside of any active host availability window for this space' 
+      });
     }
 
     // 3. Concurrency check: Ensure no overlapping active booking exists
@@ -91,7 +131,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
          AND booking_status IN ('pending_approval', 'pending_payment', 'confirmed', 'cancellation_requested')
          AND NOT (end_time <= ? OR start_time >= ?)
        FOR UPDATE`,
-      [spaceId, startTime, endTime]
+      [spaceId, formattedStart, formattedEnd]
     );
 
     if (overlaps.length > 0) {
@@ -112,7 +152,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         space_id, driver_user_id, availability_id, start_time, end_time,
         booking_type, booking_status, amount, currency
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'INR')`,
-      [spaceId, driverId, availabilityId, startTime, endTime, bookingType, initialStatus, totalAmount]
+      [spaceId, driverId, activeAvailabilityId, formattedStart, formattedEnd, bookingType, initialStatus, totalAmount]
     );
 
     const bookingId = insertResult.insertId;
