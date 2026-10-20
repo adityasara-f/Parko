@@ -1,11 +1,17 @@
-const API_BASE = '/api';
+
+const API_BASE =
+  import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export async function apiRequest<T = any>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<{ success: boolean; data?: T; error?: string; [key: string]: any }> {
   try {
-    const res = await fetch(`${API_BASE}${endpoint}`, {
+    const normalizedEndpoint = endpoint.startsWith('/')
+      ? endpoint
+      : `/${endpoint}`;
+
+    const res = await fetch(`${API_BASE}${normalizedEndpoint}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -15,9 +21,13 @@ export async function apiRequest<T = any>(
     });
 
     const data = await res.json();
+
     return data;
   } catch (err: any) {
     console.error(`API request error on ${endpoint}:`, err);
-    return { success: false, error: err.message || 'Network error occurred' };
+    return {
+      success: false,
+      error: err.message || 'Network error occurred',
+    };
   }
 }
