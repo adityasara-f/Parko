@@ -1,5 +1,5 @@
 import { pool } from '../config/database';
-import { ResultSetHeader } from 'mysql2';
+import { ResultSetHeader, RowDataPacket } from 'mysql2';
 
 interface HoldTimer {
   bookingId: number;
@@ -11,21 +11,25 @@ interface HoldTimer {
 const activeHolds = new Map<number, HoldTimer>();
 
 export class BookingHoldManager {
-  /**
-   * Cleans up stale holds on server startup
-   */
-  static async cleanupStaleHolds(): Promise<void> {
+  static async expireStaleHolds(): Promise<void> {
     try {
-      const [res1] = await pool.execute<ResultSetHeader>(
-        `UPDATE BOOKING 
-         SET booking_status = 'expired' 
-         WHERE booking_status = 'pending_payment'`
+      const [result] = await pool.execute<ResultSetHeader>(
+        `UPDATE booking
+         SET cancellation_reason = CASE
+               WHEN booking_status = 'pending_payment' THEN 'Payment hold expired'
+               ELSE 'Host approval window expired'
+             END,
+             booking_status = 'expired',
+             hold_expires_at = NULL
+         WHERE booking_status IN ('pending_payment', 'pending_approval')
+           AND hold_expires_at IS NOT NULL
+           AND hold_expires_at <= NOW()`
       );
-      if (res1.affectedRows > 0) {
-        console.log(`🧹 Cleaned up ${res1.affectedRows} orphaned pending_payment bookings.`);
+      if (result.affectedRows > 0) {
+        console.log(`Expired ${result.affectedRows} booking holds.`);
       }
     } catch (err) {
-      console.error('Error during hold cleanup:', err);
+      console.error('Error expiring stale booking holds:', err);
     }
   }
 
@@ -41,9 +45,9 @@ export class BookingHoldManager {
     const timer = setTimeout(async () => {
       try {
         await pool.execute(
-          `UPDATE BOOKING 
-           SET booking_status = 'expired', cancellation_reason = 'Payment hold timed out (3 min window)' 
-           WHERE booking_id = ? AND booking_status = 'pending_payment'`,
+          `UPDATE booking
+           SET booking_status = 'expired', cancellation_reason = 'Payment hold expired', hold_expires_at = NULL
+           WHERE booking_id = ? AND booking_status = 'pending_payment' AND hold_expires_at <= NOW()`,
           [bookingId]
         );
         console.log(`⏰ Checkout hold expired for booking #${bookingId}`);
@@ -69,9 +73,9 @@ export class BookingHoldManager {
     const timer = setTimeout(async () => {
       try {
         await pool.execute(
-          `UPDATE BOOKING 
-           SET booking_status = 'expired', cancellation_reason = 'Host did not respond in time' 
-           WHERE booking_id = ? AND booking_status = 'pending_approval'`,
+          `UPDATE booking
+           SET booking_status = 'expired', cancellation_reason = 'Host approval window expired', hold_expires_at = NULL
+           WHERE booking_id = ? AND booking_status = 'pending_approval' AND hold_expires_at <= NOW()`,
           [bookingId]
         );
         console.log(`⏰ Approval window expired for booking #${bookingId}`);
@@ -96,23 +100,18 @@ export class BookingHoldManager {
     }
   }
 
-  static getRemainingSeconds(bookingId: number): number | null {
-    const existing = activeHolds.get(bookingId);
-    if (!existing) return null;
-    const diff = Math.floor((existing.expiresAt - Date.now()) / 1000);
-    return diff > 0 ? diff : 0;
-  }
-
-  // Track confirmation timestamps in memory for 2-minute cancellation grace period
-  private static confirmedAtMap = new Map<number, number>();
-
-  static recordConfirmation(bookingId: number): void {
-    this.confirmedAtMap.set(bookingId, Date.now());
-  }
-
-  static isWithinConfirmationGracePeriod(bookingId: number, graceMinutes = 2): boolean {
-    const confirmedAt = this.confirmedAtMap.get(bookingId);
-    if (!confirmedAt) return false;
-    return (Date.now() - confirmedAt) <= graceMinutes * 60 * 1000;
+  static async getRemainingSeconds(bookingId: number): Promise<number | null> {
+    interface RemainingHoldRow extends RowDataPacket {
+      remaining_seconds: number | null;
+    }
+    const [rows] = await pool.execute<RemainingHoldRow[]>(
+      `SELECT GREATEST(TIMESTAMPDIFF(SECOND, NOW(), hold_expires_at), 0) AS remaining_seconds
+       FROM booking
+       WHERE booking_id = ? AND booking_status IN ('pending_payment', 'pending_approval')`,
+      [bookingId]
+    );
+    return rows.length > 0 && rows[0].remaining_seconds !== null
+      ? Number(rows[0].remaining_seconds)
+      : null;
   }
 }

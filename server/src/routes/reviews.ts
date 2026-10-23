@@ -19,8 +19,8 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // 1. Fetch booking details
     const [bookings] = await pool.execute<RowDataPacket[]>(
       `SELECT b.booking_id, b.space_id, b.driver_user_id, b.booking_status, b.end_time, ps.host_user_id
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
        WHERE b.booking_id = ?`,
       [bookingId]
     );
@@ -33,7 +33,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     // Auto-mark booking completed if end_time has passed
     if (booking.booking_status === 'confirmed' && new Date(booking.end_time) <= new Date()) {
-      await pool.execute("UPDATE BOOKING SET booking_status = 'completed' WHERE booking_id = ?", [bookingId]);
+      await pool.execute("UPDATE booking SET booking_status = 'completed' WHERE booking_id = ?", [bookingId]);
       booking.booking_status = 'completed';
     }
 
@@ -58,7 +58,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     // Check if reviewer has already reviewed this booking
     const [existing] = await pool.execute<RowDataPacket[]>(
-      'SELECT review_id FROM REVIEW WHERE booking_id = ? AND reviewer_user_id = ?',
+      'SELECT review_id FROM review WHERE booking_id = ? AND reviewer_user_id = ?',
       [bookingId, reviewerId]
     );
 
@@ -68,7 +68,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     // Enforce no more than two reviews per booking
     const [reviewCount] = await pool.execute<RowDataPacket[]>(
-      'SELECT COUNT(*) as total_reviews FROM REVIEW WHERE booking_id = ?',
+      'SELECT COUNT(*) as total_reviews FROM review WHERE booking_id = ?',
       [bookingId]
     );
     if ((reviewCount[0] as any).total_reviews >= 2) {
@@ -77,7 +77,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     // Insert Review
     const [result] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO REVIEW (booking_id, reviewer_user_id, reviewed_user_id, rating, comment)
+      `INSERT INTO review (booking_id, reviewer_user_id, reviewed_user_id, rating, comment)
        VALUES (?, ?, ?, ?, ?)`,
       [bookingId, reviewerId, reviewedUserId, rating, comment || null]
     );
@@ -105,9 +105,9 @@ router.get('/space/:spaceId', async (req: Request, res: Response) => {
         r.rating,
         r.comment,
         u.name AS reviewer_name
-       FROM REVIEW r
-       JOIN BOOKING b ON r.booking_id = b.booking_id
-       JOIN USER u ON r.reviewer_user_id = u.user_id
+      FROM review r
+      JOIN booking b ON r.booking_id = b.booking_id
+      JOIN \`user\` u ON r.reviewer_user_id = u.user_id
        WHERE b.space_id = ? AND r.reviewed_user_id != u.user_id
        ORDER BY r.review_id DESC`,
       [spaceId]

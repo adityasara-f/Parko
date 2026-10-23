@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { pool } from '../config/database';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -13,13 +14,19 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   if (!bookingId || !issueType || !description || description.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Booking ID, issue type, and detailed description are required' });
   }
+  if (!['space_occupied', 'access_denied', 'cleanliness', 'early_late_overstay', 'owner_cancellation', 'other'].includes(issueType)) {
+    return res.status(400).json({ success: false, error: 'Unsupported issue type' });
+  }
+  if (!env.adminUserId) {
+    return res.status(503).json({ success: false, error: 'Dispute administration is not configured' });
+  }
 
   try {
     // 1. Verify booking participant
     const [bookings] = await pool.execute<RowDataPacket[]>(
       `SELECT b.booking_id, b.driver_user_id, ps.host_user_id 
-       FROM BOOKING b 
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id 
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
        WHERE b.booking_id = ?`,
       [bookingId]
     );
@@ -33,14 +40,11 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ success: false, error: 'Only participants in this booking may submit a dispute' });
     }
 
-    // Assign to demo administrator
-    const DEMO_ADMIN_USER_ID = Number(process.env.DEMO_ADMIN_USER_ID || 1);
-
     const [resHeader] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO DISPUTE (
+      `INSERT INTO dispute (
         booking_id, reporter_user_id, administrator_user_id, issue_type, description, dispute_status
       ) VALUES (?, ?, ?, ?, ?, 'open')`,
-      [bookingId, reporterId, DEMO_ADMIN_USER_ID, issueType, description]
+      [bookingId, reporterId, env.adminUserId, issueType, description]
     );
 
     return res.status(201).json({
@@ -69,9 +73,9 @@ router.get('/my', authenticateToken, async (req: AuthRequest, res: Response) => 
         b.start_time,
         b.end_time,
         ps.title as space_title
-       FROM DISPUTE d
-       JOIN BOOKING b ON d.booking_id = b.booking_id
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
+      FROM dispute d
+      JOIN booking b ON d.booking_id = b.booking_id
+      JOIN parking_space ps ON b.space_id = ps.space_id
        WHERE d.reporter_user_id = ?
        ORDER BY d.dispute_id DESC`,
       [req.user!.user_id]

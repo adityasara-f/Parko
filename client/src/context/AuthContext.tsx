@@ -13,7 +13,7 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (token: string, userData: User) => void;
+  login: (userData: User) => void;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -49,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshUser();
   }, []);
 
-  const login = (_token: string, userData: User) => {
+  const login = (userData: User) => {
     setUser(userData);
   };
 

@@ -20,8 +20,8 @@ export const LoginPage: React.FC = () => {
   const [userName, setUserName] = useState<string>('');
 
   // Password flow state
-  const [email, setEmail] = useState('admin@parko.com'); // Pre-fill with demo admin for quick evaluation!
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +68,7 @@ export const LoginPage: React.FC = () => {
       });
 
       if (res.success && res.user) {
-        login(res.token, res.user);
+        login(res.user);
         navigate(from, { replace: true });
       } else {
         setError(res.error || 'Verification failed');
@@ -93,7 +93,7 @@ export const LoginPage: React.FC = () => {
       });
 
       if (res.success && res.user) {
-        login(res.token, res.user);
+        login(res.user);
         navigate(from, { replace: true });
       } else {
         setError(res.error || 'Login failed');

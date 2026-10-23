@@ -18,7 +18,7 @@ router.get('/metrics', async (req: AuthRequest, res: Response) => {
         COUNT(CASE WHEN listing_status = 'approved' THEN 1 END) as approved_spaces,
         COUNT(CASE WHEN listing_status = 'pending_verification' THEN 1 END) as pending_spaces,
         COUNT(CASE WHEN listing_status = 'suspended' THEN 1 END) as suspended_spaces
-       FROM PARKING_SPACE`
+      FROM parking_space`
     );
 
     const [usersCount] = await pool.execute<RowDataPacket[]>(
@@ -26,7 +26,7 @@ router.get('/metrics', async (req: AuthRequest, res: Response) => {
         COUNT(*) as total_users,
         COUNT(CASE WHEN account_status = 'active' THEN 1 END) as active_users,
         COUNT(CASE WHEN account_status = 'suspended' THEN 1 END) as suspended_users
-       FROM USER`
+      FROM \`user\``
     );
 
     const [bookingsCount] = await pool.execute<RowDataPacket[]>(
@@ -36,14 +36,14 @@ router.get('/metrics', async (req: AuthRequest, res: Response) => {
         COUNT(CASE WHEN booking_status = 'completed' THEN 1 END) as completed_bookings,
         COUNT(CASE WHEN booking_status = 'cancellation_requested' THEN 1 END) as cancellation_requests,
         COALESCE(SUM(CASE WHEN booking_status = 'completed' THEN amount ELSE 0 END), 0) as total_volume
-       FROM BOOKING`
+      FROM booking`
     );
 
     const [disputesCount] = await pool.execute<RowDataPacket[]>(
       `SELECT 
         COUNT(*) as total_disputes,
         COUNT(CASE WHEN dispute_status = 'open' THEN 1 END) as open_disputes
-       FROM DISPUTE`
+      FROM dispute`
     );
 
     return res.json({
@@ -85,10 +85,10 @@ router.get('/listings', async (req: AuthRequest, res: Response) => {
         u.phone as host_phone,
         lv.verification_status,
         lv.decision_at
-       FROM PARKING_SPACE ps
-       JOIN USER u ON ps.host_user_id = u.user_id
-       LEFT JOIN PRIVATE_SPACE_LOCATION psl ON ps.space_id = psl.space_id
-       LEFT JOIN LISTING_VERIFICATION lv ON ps.space_id = lv.space_id
+      FROM parking_space ps
+      JOIN \`user\` u ON ps.host_user_id = u.user_id
+      LEFT JOIN private_space_location psl ON ps.space_id = psl.space_id
+      LEFT JOIN listing_verification lv ON ps.space_id = lv.space_id
        ORDER BY ps.space_id DESC`
     );
 
@@ -118,13 +118,13 @@ router.post('/listings/:id/decide', async (req: AuthRequest, res: Response) => {
 
     // 1. Update PARKING_SPACE listing_status
     await connection.execute(
-      `UPDATE PARKING_SPACE SET listing_status = ? WHERE space_id = ?`,
+      `UPDATE parking_space SET listing_status = ? WHERE space_id = ?`,
       [spaceListingStatus, id]
     );
 
     // 2. Update or insert LISTING_VERIFICATION
     const [upd] = await connection.execute<ResultSetHeader>(
-      `UPDATE LISTING_VERIFICATION 
+      `UPDATE listing_verification
        SET reviewer_user_id = ?, verification_status = ?, decision_at = NOW()
        WHERE space_id = ?`,
       [adminId, status, id]
@@ -132,7 +132,7 @@ router.post('/listings/:id/decide', async (req: AuthRequest, res: Response) => {
 
     if (upd.affectedRows === 0) {
       await connection.execute(
-        `INSERT INTO LISTING_VERIFICATION (space_id, reviewer_user_id, verification_status, decision_at)
+        `INSERT INTO listing_verification (space_id, reviewer_user_id, verification_status, decision_at)
          VALUES (?, ?, ?, NOW())`,
         [id, adminId, status]
       );
@@ -165,7 +165,7 @@ router.post('/listings/:id/status', async (req: AuthRequest, res: Response) => {
 
   try {
     await pool.execute(
-      `UPDATE PARKING_SPACE SET listing_status = ? WHERE space_id = ?`,
+      `UPDATE parking_space SET listing_status = ? WHERE space_id = ?`,
       [status, id]
     );
 
@@ -190,8 +190,8 @@ router.get('/users', async (req: AuthRequest, res: Response) => {
         uv.verification_type,
         uv.verification_status,
         uv.verified_at
-       FROM USER u
-       LEFT JOIN USER_VERIFICATION uv ON u.user_id = uv.user_id
+      FROM \`user\` u
+      LEFT JOIN user_verification uv ON u.user_id = uv.user_id
        ORDER BY u.user_id DESC`
     );
 
@@ -209,10 +209,13 @@ router.post('/users/:id/verify', async (req: AuthRequest, res: Response) => {
   if (status !== 'verified' && status !== 'rejected') {
     return res.status(400).json({ success: false, error: 'Status must be verified or rejected' });
   }
+  if (!['phone_otp', 'email_confirmation'].includes(type)) {
+    return res.status(400).json({ success: false, error: 'Unsupported verification type' });
+  }
 
   try {
     const [upd] = await pool.execute<ResultSetHeader>(
-      `UPDATE USER_VERIFICATION 
+      `UPDATE user_verification
        SET verification_type = ?, verification_status = ?, verified_at = NOW()
        WHERE user_id = ?`,
       [type, status, id]
@@ -220,7 +223,7 @@ router.post('/users/:id/verify', async (req: AuthRequest, res: Response) => {
 
     if (upd.affectedRows === 0) {
       await pool.execute(
-        `INSERT INTO USER_VERIFICATION (user_id, verification_type, verification_status, verified_at)
+        `INSERT INTO user_verification (user_id, verification_type, verification_status, verified_at)
          VALUES (?, ?, ?, NOW())`,
         [id, type, status]
       );
@@ -243,7 +246,7 @@ router.post('/users/:id/status', async (req: AuthRequest, res: Response) => {
 
   try {
     await pool.execute(
-      `UPDATE USER SET account_status = ? WHERE user_id = ?`,
+      `UPDATE \`user\` SET account_status = ? WHERE user_id = ?`,
       [status, id]
     );
 
@@ -274,10 +277,10 @@ router.get('/disputes', async (req: AuthRequest, res: Response) => {
         b.start_time,
         b.end_time,
         ps.title as space_title
-       FROM DISPUTE d
-       JOIN BOOKING b ON d.booking_id = b.booking_id
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
-       JOIN USER reporter ON d.reporter_user_id = reporter.user_id
+      FROM dispute d
+      JOIN booking b ON d.booking_id = b.booking_id
+      JOIN parking_space ps ON b.space_id = ps.space_id
+      JOIN \`user\` reporter ON d.reporter_user_id = reporter.user_id
        ORDER BY d.dispute_id DESC`
     );
 
@@ -304,8 +307,8 @@ router.post('/disputes/:id/resolve', async (req: AuthRequest, res: Response) => 
 
     const [disputes] = await connection.execute<RowDataPacket[]>(
       `SELECT d.dispute_id, d.booking_id, d.issue_type, b.booking_status 
-       FROM DISPUTE d
-       JOIN BOOKING b ON d.booking_id = b.booking_id
+      FROM dispute d
+      JOIN booking b ON d.booking_id = b.booking_id
        WHERE d.dispute_id = ? FOR UPDATE`,
       [id]
     );
@@ -322,18 +325,18 @@ router.post('/disputes/:id/resolve', async (req: AuthRequest, res: Response) => 
       if (approveCancellation) {
         // Mark booking cancelled and release slot
         await connection.execute(
-          `UPDATE BOOKING SET booking_status = 'cancelled', cancellation_reason = ? WHERE booking_id = ?`,
+          `UPDATE booking SET booking_status = 'cancelled', cancellation_reason = ? WHERE booking_id = ?`,
           [`Admin approved host cancellation: ${resolution}`, dispute.booking_id]
         );
         // Refund payment
         await connection.execute(
-          `UPDATE PAYMENT_ATTEMPT SET payment_status = 'refunded' WHERE booking_id = ?`,
+          `UPDATE payment_attempt SET payment_status = 'refunded' WHERE booking_id = ?`,
           [dispute.booking_id]
         );
       } else {
         // Retain / restore confirmed booking
         await connection.execute(
-          `UPDATE BOOKING SET booking_status = 'confirmed', cancellation_reason = NULL WHERE booking_id = ?`,
+          `UPDATE booking SET booking_status = 'confirmed', cancellation_reason = NULL WHERE booking_id = ?`,
           [dispute.booking_id]
         );
       }
@@ -341,7 +344,7 @@ router.post('/disputes/:id/resolve', async (req: AuthRequest, res: Response) => 
 
     // Update DISPUTE record
     await connection.execute(
-      `UPDATE DISPUTE 
+      `UPDATE dispute
        SET administrator_user_id = ?, dispute_status = 'resolved', resolution = ? 
        WHERE dispute_id = ?`,
       [adminId, resolution, id]

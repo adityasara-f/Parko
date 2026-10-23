@@ -12,8 +12,29 @@ out/
 .env
 .env.local
 .env.*.local
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
 *.pem
 *.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+**/certs/
+.vercel/
+
+# Local database exports and browser/session artifacts
+/parko_backup*.sql
+*.sql.gz
+*.dump
+*.bak
+/test_cookie.txt
+*cookie*
+*.sqlite
+*.sqlite3
 
 # Logs
 npm-debug.log*

@@ -1,67 +1,57 @@
-# PARKO REST API CONTRACT
+# Parko API Contract
 
-All responses return standard JSON format:
-- Success: `{ "success": true, "data": ... }`
-- Error: `{ "success": false, "error": "Error message" }`
+Requests and responses use JSON except for the `parko_token` HttpOnly session cookie. The browser must send credentials. The JWT is never returned in a response body.
 
-## 1. Authentication
-- `POST /api/auth/otp/request`: Request 6-digit demo OTP for a phone number. Returns demo OTP for simulation on screen.
-- `POST /api/auth/otp/verify`: Verify OTP. Signs in or registers user; records phone_otp verification in `USER_VERIFICATION`.
-- `POST /api/auth/register`: Register with email, phone, name, password.
-- `POST /api/auth/login`: Login with email and password.
-- `POST /api/auth/logout`: Clears authentication cookie/session.
-- `GET /api/auth/me`: Get current authenticated user details and verifications.
+## Health
 
-## 2. Public Parking Listings (Privacy-Preserved)
-- `GET /api/spaces/search`: Search active/approved listings in city.
-  - Query params: `cityId`, `vehicleCategory`, `maxPrice`, `startTime`, `endTime`, `approvalMode`
-  - Output fields: `space_id`, `title`, `description`, `vehicle_category`, `hourly_rate`, `access_method`, `approval_mode`, `approximate_latitude`, `approximate_longitude`, `city_name`, `currency`, `average_rating`, `total_reviews`.
-  - **CRITICAL**: Never returns `exact_address`, `precise_latitude`, `precise_longitude`, `private_notes`.
-- `GET /api/spaces/:id`: Public listing detail.
-- `GET /api/spaces/:id/availability`: List available windows for a space.
+- `GET /api/health`: process health response. It does not prove database connectivity.
 
-## 3. Protected Route Disclosure (Pre-Booking)
-- `GET /api/spaces/:id/route-preview`: Requires authentication and active booking intent.
-  - Returns destination coordinate and approximate waypoints. Does NOT return text address or gate access codes.
+## Authentication
 
-## 4. Bookings & Checkout Workflow
-- `POST /api/bookings`: Create booking hold.
-  - Body: `{ spaceId, availabilityId, startTime, endTime }`
-  - Validates slot availability, prevents overlaps.
-  - For `instant`: sets status to `pending_payment` with 3-minute timer.
-  - For `owner_approved`: sets status to `pending_approval` with 5/10/30-minute timer.
-- `GET /api/bookings/my`: List bookings for current driver.
-- `GET /api/bookings/:id`: Booking details.
-- `POST /api/bookings/:id/pay`: Complete demo payment.
-  - Body: `{ paymentMethod }`
-  - Validates active hold, executes database transaction: inserts `PAYMENT_ATTEMPT` (successful), updates `BOOKING` status to `confirmed`, creates/links `BOOKING_ACCESS_DETAIL`.
-- `POST /api/bookings/:id/cancel`: Cancel booking by driver (respects 2-hour / 2-minute rule).
-- `GET /api/bookings/:id/access`: Retrieve `BOOKING_ACCESS_DETAIL`. Available ONLY to confirmed driver after payment between `release_at` and `expiry_at`.
+- `POST /api/auth/otp/request`: development-only simulated OTP; returns the demo code and stores it in process memory. Disabled in production. No SMS is sent.
+- `POST /api/auth/otp/verify`: development-only verification and phone registration; sets the session cookie. Disabled in production.
+- `POST /api/auth/register`: create an email/password account; sets the session cookie. Email confirmation is recorded as pending; no email provider is configured.
+- `POST /api/auth/login`: verify bcrypt password and set the session cookie.
+- `POST /api/auth/logout`: clear the session cookie.
+- `GET /api/auth/me`: return authenticated user and verification records.
+- `PUT /api/auth/me`: update authenticated user's name and phone.
 
-## 5. Owner Operations
-- `GET /api/owner/spaces`: List owner's spaces.
-- `POST /api/owner/spaces`: Create new space (wizard submission). Inserts `PARKING_SPACE`, `PRIVATE_SPACE_LOCATION`, and `LISTING_VERIFICATION` (pending).
-- `PUT /api/owner/spaces/:id`: Update space details.
-- `POST /api/owner/spaces/:id/availability`: Add single window or expanded recurring windows into `AVAILABILITY_WINDOW`.
-- `GET /api/owner/bookings`: View incoming booking requests.
-- `POST /api/owner/bookings/:id/decide`: Approve or decline pending booking request.
-- `POST /api/owner/bookings/:id/request-cancellation`: Owner requests cancellation with mandatory reason (creates DISPUTE record).
+## Spaces
 
-## 6. Reviews & Mutual Feedback
-- `POST /api/reviews`: Submit review for completed booking. Validates caller is driver or host, rating 1-5.
-- `GET /api/spaces/:id/reviews`: View reviews for a parking space.
+- `GET /api/spaces/search`: search approved spaces. Supports `cityId`, `vehicleCategory`, `maxPrice`, `approvalMode`, and `minRating`. Public results omit private location fields.
+- `GET /api/spaces/:id`: public approved space detail.
+- `GET /api/spaces/:id/availability`: current/future windows and blocking bookings.
+- `GET /api/spaces/:id/route-preview`: returns precise map coordinates to any authenticated user. It does not require booking intent; this remains a privacy limitation.
 
-## 7. Disputes
-- `POST /api/disputes`: Submit dispute for a booking.
-- `GET /api/disputes/my`: View user's filed disputes.
+## Bookings
 
-## 8. Admin Interface (Protected by `requireAdmin` and seeded user ID)
-- `GET /api/admin/metrics`: Platform counts and key operational statistics.
-- `GET /api/admin/verifications/listings`: Pending listings to review.
-- `POST /api/admin/verifications/listings/:id/decide`: Approve / reject / request changes.
-- `GET /api/admin/verifications/users`: User verification requests.
-- `POST /api/admin/verifications/users/:id/decide`: Approve / reject user verification.
-- `GET /api/admin/disputes`: Open disputes and owner-cancellation requests.
-- `POST /api/admin/disputes/:id/resolve`: Resolve dispute / approve cancellation and release slot.
-- `POST /api/admin/users/:id/status`: Suspend or activate user.
-- `POST /api/admin/spaces/:id/status`: Suspend or restore parking space listing.
+- `POST /api/bookings`: authenticated driver creates an instant or owner-approved hold after availability and overlap checks.
+- `GET /api/bookings/my`: authenticated driver's bookings.
+- `GET /api/bookings/:id`: booking detail for driver, host, or admin.
+- `POST /api/bookings/:id/pay`: local simulated payment and booking confirmation. Disabled in production; no payment provider is integrated.
+- `POST /api/bookings/:id/cancel`: driver cancellation and simulated refund state.
+- `GET /api/bookings/:id/access`: paid booking access details during the stored release/expiry interval, for the driver or admin.
+
+## Owner
+
+- `GET /api/owner/dashboard`, `/spaces`, `/bookings`: authenticated owner views.
+- `POST /api/owner/spaces`: create a listing, private location, pending verification, and availability.
+- `POST /api/owner/spaces/:id/availability`: add availability windows.
+- `POST /api/owner/bookings/:id/decide`: approve or decline a pending owner approval.
+- `POST /api/owner/bookings/:id/request-cancellation`: submit an admin-reviewed cancellation request.
+
+## Reviews and disputes
+
+- `POST /api/reviews`: participant review for a completed booking.
+- `GET /api/reviews/space/:spaceId`: public reviews for the space.
+- `POST /api/disputes`: participant dispute. Supported issue values: `space_occupied`, `access_denied`, `cleanliness`, `early_late_overstay`, `owner_cancellation`, `other`.
+- `GET /api/disputes/my`: authenticated user's reported disputes.
+
+## Admin
+
+All admin endpoints require an authenticated user whose ID equals the server-only `ADMIN_USER_ID`. There is no role column or default administrator. The ID must be provisioned through a trusted process.
+
+- `GET /api/admin/metrics`, `/listings`, `/users`, `/disputes`.
+- `POST /api/admin/listings/:id/decide`, `/listings/:id/status`.
+- `POST /api/admin/users/:id/verify`, `/users/:id/status`.
+- `POST /api/admin/disputes/:id/resolve`.

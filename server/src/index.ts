@@ -1,10 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import dotenv from 'dotenv';
-import path from 'path';
-
-dotenv.config({ path: path.join(__dirname, '../../.env') });
+import { env } from './config/env';
 
 import { testConnection } from './config/database';
 import { BookingHoldManager } from './services/holdManager';
@@ -18,17 +15,21 @@ import disputesRoutes from './routes/disputes';
 import adminRoutes from './routes/admin';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = env.port;
 
 // CORS configuration allowing React frontend with credentials
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: env.clientUrl || false,
   credentials: true
 }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+app.use('/api', (_req, _res, next) => {
+  BookingHoldManager.expireStaleHolds().finally(next);
+});
 
 // Health Check
 app.get('/api/health', (req, res) => {
@@ -54,8 +55,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   try {
     await testConnection();
-    await BookingHoldManager.cleanupStaleHolds();
-
     app.listen(PORT, () => {
       console.log(`🚀 Parko API Server running on port ${PORT}`);
       console.log(`🌐 Accessible at http://localhost:${PORT}`);

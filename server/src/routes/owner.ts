@@ -3,6 +3,7 @@ import { pool } from '../config/database';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 import { BookingHoldManager } from '../services/holdManager';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.get('/dashboard', authenticateToken, async (req: AuthRequest, res: Respon
         COUNT(DISTINCT CASE WHEN listing_status = 'approved' THEN space_id END) as active_listings,
         COUNT(DISTINCT CASE WHEN listing_status = 'pending_verification' THEN space_id END) as pending_listings,
         COUNT(DISTINCT CASE WHEN listing_status = 'rejected' THEN space_id END) as rejected_listings
-       FROM PARKING_SPACE
+      FROM parking_space
        WHERE host_user_id = ?`,
       [hostId]
     );
@@ -30,8 +31,8 @@ router.get('/dashboard', authenticateToken, async (req: AuthRequest, res: Respon
         COUNT(DISTINCT CASE WHEN b.booking_status = 'confirmed' AND b.end_time >= NOW() THEN b.booking_id END) as upcoming_bookings,
         COUNT(DISTINCT CASE WHEN b.booking_status = 'completed' THEN b.booking_id END) as completed_bookings,
         COALESCE(SUM(CASE WHEN b.booking_status = 'completed' THEN b.amount ELSE 0 END), 0) as total_earnings
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
        WHERE ps.host_user_id = ?`,
       [hostId]
     );
@@ -72,9 +73,9 @@ router.get('/spaces', authenticateToken, async (req: AuthRequest, res: Response)
         psl.precise_longitude,
         psl.private_notes,
         lv.verification_status as admin_verification_status
-       FROM PARKING_SPACE ps
-       LEFT JOIN PRIVATE_SPACE_LOCATION psl ON ps.space_id = psl.space_id
-       LEFT JOIN LISTING_VERIFICATION lv ON ps.space_id = lv.space_id
+      FROM parking_space ps
+      LEFT JOIN private_space_location psl ON ps.space_id = psl.space_id
+      LEFT JOIN listing_verification lv ON ps.space_id = lv.space_id
        WHERE ps.host_user_id = ?
        ORDER BY ps.space_id DESC`,
       [hostId]
@@ -107,6 +108,9 @@ router.post('/spaces', authenticateToken, async (req: AuthRequest, res: Response
   if (!title || !description || !vehicle_category || !hourly_rate || !access_method || !exact_address || !precise_latitude || !precise_longitude) {
     return res.status(400).json({ success: false, error: 'All space details and location coordinates are required' });
   }
+  if (!env.adminUserId) {
+    return res.status(503).json({ success: false, error: 'Listing review is not configured' });
+  }
 
   // Derive approximate coords by introducing intentional 0.0005 offset (~50 meters) for public browsing safety
   const approxLat = (parseFloat(precise_latitude) + 0.0003).toFixed(7);
@@ -120,7 +124,7 @@ router.post('/spaces', authenticateToken, async (req: AuthRequest, res: Response
 
     // 1. Insert PARKING_SPACE with pending_verification status
     const [spaceRes] = await connection.execute<ResultSetHeader>(
-      `INSERT INTO PARKING_SPACE (
+      `INSERT INTO parking_space (
         host_user_id, city_id, title, description, vehicle_category,
         hourly_rate, daily_rate, access_method, approval_mode, listing_status,
         approximate_latitude, approximate_longitude
@@ -136,19 +140,18 @@ router.post('/spaces', authenticateToken, async (req: AuthRequest, res: Response
 
     // 2. Insert PRIVATE_SPACE_LOCATION
     await connection.execute(
-      `INSERT INTO PRIVATE_SPACE_LOCATION (
+      `INSERT INTO private_space_location (
         space_id, exact_address, precise_latitude, precise_longitude, private_notes
       ) VALUES (?, ?, ?, ?, ?)`,
       [spaceId, exact_address, precise_latitude, precise_longitude, private_notes || '']
     );
 
     // 3. Insert LISTING_VERIFICATION record
-    const DEMO_ADMIN_USER_ID = Number(process.env.DEMO_ADMIN_USER_ID || 1);
     await connection.execute(
-      `INSERT INTO LISTING_VERIFICATION (
+      `INSERT INTO listing_verification (
         space_id, reviewer_user_id, verification_status, decision_at
       ) VALUES (?, ?, 'pending', NULL)`,
-      [spaceId, DEMO_ADMIN_USER_ID]
+      [spaceId, env.adminUserId]
     );
 
     // 4. Create initial availability windows (supports expanded recurring schedule windows from Step 4)
@@ -157,7 +160,7 @@ router.post('/spaces', authenticateToken, async (req: AuthRequest, res: Response
       for (const w of windows) {
         if (new Date(w.end_time) > new Date(w.start_time)) {
           await connection.execute(
-            `INSERT INTO AVAILABILITY_WINDOW (space_id, start_time, end_time, availability_status)
+            `INSERT INTO availability_window (space_id, start_time, end_time, availability_status)
              VALUES (?, ?, ?, 'available')`,
             [spaceId, w.start_time, w.end_time]
           );
@@ -165,7 +168,7 @@ router.post('/spaces', authenticateToken, async (req: AuthRequest, res: Response
       }
     } else {
       await connection.execute(
-        `INSERT INTO AVAILABILITY_WINDOW (space_id, start_time, end_time, availability_status)
+        `INSERT INTO availability_window (space_id, start_time, end_time, availability_status)
          VALUES (?, DATE_ADD(CURRENT_DATE, INTERVAL 8 HOUR), DATE_ADD(CURRENT_DATE, INTERVAL 22 HOUR), 'available')`,
         [spaceId]
       );
@@ -201,7 +204,7 @@ router.post('/spaces/:id/availability', authenticateToken, async (req: AuthReque
   try {
     // Verify space ownership
     const [spaces] = await pool.execute<RowDataPacket[]>(
-      'SELECT space_id FROM PARKING_SPACE WHERE space_id = ? AND host_user_id = ?',
+      'SELECT space_id FROM parking_space WHERE space_id = ? AND host_user_id = ?',
       [id, hostId]
     );
 
@@ -215,7 +218,7 @@ router.post('/spaces/:id/availability', authenticateToken, async (req: AuthReque
       }
 
       await pool.execute(
-        `INSERT INTO AVAILABILITY_WINDOW (space_id, start_time, end_time, availability_status)
+        `INSERT INTO availability_window (space_id, start_time, end_time, availability_status)
          VALUES (?, ?, ?, 'available')`,
         [id, w.start_time, w.end_time]
       );
@@ -250,10 +253,10 @@ router.get('/bookings', authenticateToken, async (req: AuthRequest, res: Respons
         b.currency,
         b.cancellation_reason,
         r.review_id AS host_review_id
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
-       JOIN USER u ON b.driver_user_id = u.user_id
-       LEFT JOIN REVIEW r ON b.booking_id = r.booking_id AND r.reviewer_user_id = ps.host_user_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
+      JOIN \`user\` u ON b.driver_user_id = u.user_id
+      LEFT JOIN review r ON b.booking_id = r.booking_id AND r.reviewer_user_id = ps.host_user_id
        WHERE ps.host_user_id = ?
        ORDER BY b.booking_id DESC`,
       [hostId]
@@ -283,8 +286,8 @@ router.post('/bookings/:id/decide', authenticateToken, async (req: AuthRequest, 
 
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT b.booking_id, b.booking_status, ps.host_user_id
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
        WHERE b.booking_id = ? FOR UPDATE`,
       [id]
     );
@@ -312,7 +315,7 @@ router.post('/bookings/:id/decide', authenticateToken, async (req: AuthRequest, 
     if (decision === 'approve') {
       // Transition to pending_payment with 3-minute checkout window
       await connection.execute(
-        `UPDATE BOOKING SET booking_status = 'pending_payment' WHERE booking_id = ?`,
+        `UPDATE booking SET booking_status = 'pending_payment', hold_expires_at = DATE_ADD(NOW(), INTERVAL 3 MINUTE) WHERE booking_id = ?`,
         [id]
       );
       BookingHoldManager.registerCheckoutHold(Number(id), 3);
@@ -324,7 +327,7 @@ router.post('/bookings/:id/decide', authenticateToken, async (req: AuthRequest, 
     } else {
       // Decline and release slot hold
       await connection.execute(
-        `UPDATE BOOKING SET booking_status = 'declined', cancellation_reason = ? WHERE booking_id = ?`,
+        `UPDATE booking SET booking_status = 'declined', cancellation_reason = ?, hold_expires_at = NULL WHERE booking_id = ?`,
         [reason || 'Declined by host', id]
       );
       BookingHoldManager.clearHold(Number(id));
@@ -350,6 +353,9 @@ router.post('/bookings/:id/request-cancellation', authenticateToken, async (req:
   if (!reason || reason.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'A mandatory reason is required for owner cancellation' });
   }
+  if (!env.adminUserId) {
+    return res.status(503).json({ success: false, error: 'Dispute administration is not configured' });
+  }
 
   const connection = await pool.getConnection();
 
@@ -358,8 +364,8 @@ router.post('/bookings/:id/request-cancellation', authenticateToken, async (req:
 
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT b.booking_id, b.booking_status, ps.host_user_id
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
        WHERE b.booking_id = ? FOR UPDATE`,
       [id]
     );
@@ -386,17 +392,17 @@ router.post('/bookings/:id/request-cancellation', authenticateToken, async (req:
 
     // Mark booking status as cancellation_requested (continues blocking until admin resolves)
     await connection.execute(
-      `UPDATE BOOKING SET booking_status = 'cancellation_requested', cancellation_reason = ? WHERE booking_id = ?`,
+      `UPDATE booking SET booking_status = 'cancellation_requested', cancellation_reason = ?, hold_expires_at = NULL WHERE booking_id = ?`,
       [`Host requested cancellation: ${reason}`, id]
     );
 
     // Create DISPUTE record for administrator review
-    const DEMO_ADMIN_USER_ID = Number(process.env.DEMO_ADMIN_USER_ID || 1);
+    const administratorUserId = env.adminUserId;
     await connection.execute(
-      `INSERT INTO DISPUTE (
+      `INSERT INTO dispute (
         booking_id, reporter_user_id, administrator_user_id, issue_type, description, dispute_status
       ) VALUES (?, ?, ?, 'owner_cancellation', ?, 'open')`,
-      [id, hostId, DEMO_ADMIN_USER_ID, reason]
+      [id, hostId, administratorUserId, reason]
     );
 
     await connection.commit();

@@ -1,131 +1,129 @@
-# Parko — Smart Shared Parking Marketplace Prototype
-## Course Implementation & Demonstration Guide
+# Parko
 
-Parko is a database-backed parking marketplace web application connecting drivers with available private parking spaces and driveways.
+Parko is a React/Vite parking marketplace frontend with an Express/MySQL API. The application supports public space search, maps, authentication, owner listings, bookings, reviews, disputes, and administration.
 
----
+## Requirements
 
-## 1. Frozen Schema Adherence (Exactly 12 Entities, 83 Attributes)
+- Node.js 20.19+ or 22.12+
+- npm
+- MySQL 8.0.16+ (InnoDB and enforced `CHECK` constraints)
 
-Verified against MySQL `information_schema.columns` (see `database/05_tests.sql`):
-1. **`USER`** (7 attributes): `user_id`, `name`, `email`, `phone`, `password_hash`, `account_status`, `created_at`
-2. **`CITY`** (6 attributes): `city_id`, `city_name`, `region`, `country`, `timezone`, `currency`
-3. **`PARKING_SPACE`** (13 attributes): `space_id`, `host_user_id`, `city_id`, `title`, `description`, `vehicle_category`, `hourly_rate`, `daily_rate`, `access_method`, `approval_mode`, `listing_status`, `approximate_latitude`, `approximate_longitude`
-4. **`PRIVATE_SPACE_LOCATION`** (5 attributes): `space_id`, `exact_address`, `precise_latitude`, `precise_longitude`, `private_notes`
-5. **`AVAILABILITY_WINDOW`** (5 attributes): `availability_id`, `space_id`, `start_time`, `end_time`, `availability_status`
-6. **`BOOKING`** (11 attributes): `booking_id`, `space_id`, `driver_user_id`, `availability_id`, `start_time`, `end_time`, `booking_type`, `booking_status`, `amount`, `currency`, `cancellation_reason`
-7. **`PAYMENT_ATTEMPT`** (7 attributes): `payment_id`, `booking_id`, `amount`, `currency`, `payment_method`, `payment_status`, `payment_reference`
-8. **`USER_VERIFICATION`** (5 attributes): `verification_id`, `user_id`, `verification_type`, `verification_status`, `verified_at`
-9. **`LISTING_VERIFICATION`** (5 attributes): `listing_verification_id`, `space_id`, `reviewer_user_id`, `verification_status`, `decision_at`
-10. **`BOOKING_ACCESS_DETAIL`** (5 attributes): `access_id`, `booking_id`, `access_instructions`, `release_at`, `expiry_at`
-11. **`REVIEW`** (6 attributes): `review_id`, `booking_id`, `reviewer_user_id`, `reviewed_user_id`, `rating`, `comment`
-12. **`DISPUTE`** (8 attributes): `dispute_id`, `booking_id`, `reporter_user_id`, `administrator_user_id`, `issue_type`, `description`, `dispute_status`, `resolution`
+## Local setup
 
-**Total Count**: Exactly **12 base tables** and **83 attributes**. No extra columns or persistent storage added.
+Install each app from the repository root:
 
----
-
-## 2. Prerequisites
-- **Node.js**: v18+ (Tested on v24.18)
-- **MySQL Community Server**: 8.0+
-- **MySQL Workbench** or command line client
-
----
-
-## 3. Database Initialization
-
-Execute the SQL scripts in `database/` in sequential order:
 ```powershell
-mysql -u root -p < database/01_schema.sql
-mysql -u root -p < database/02_seed.sql
-mysql -u root -p < database/04_views.sql
-mysql -u root -p < database/05_tests.sql
+npm ci --prefix server
+npm ci --prefix client
+Copy-Item .env.example server/.env
 ```
 
----
+Edit `server/.env` with local values. Keep it private; `.env` files are ignored by Git. `DB_NAME` should refer to a new, empty database for the setup below. `JWT_SECRET` must be a random value of at least 32 bytes. `ADMIN_USER_ID` is optional for ordinary user flows; set it to the ID of a trusted admin account to enable admin-only workflows. Never use a seeded/demo user as a production administrator.
 
-## 4. Environment Configuration
-The backend reads from `server/.env`. A safe template is provided at `.env.example`:
-```env
-PORT=5000
-NODE_ENV=development
-CLIENT_URL=http://localhost:5173
+Create a fresh local database explicitly (this command does not use or alter an existing schema):
 
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_password
-DB_NAME=parko_db
-
-JWT_SECRET=parko_super_secure_jwt_secret_token_2026_demo
-DEMO_ADMIN_USER_ID=1
+```powershell
+mysql -u root -p -e "CREATE DATABASE parko_db CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
 ```
 
----
+Set `DB_NAME=parko_db` in `server/.env`, then initialize only that empty database:
 
-## 5. Running the Application
-
-### 1. Start the Backend API Server:
 ```powershell
-cd server
-npm install
+npm run db:init
+```
+
+The initializer refuses to create tables if the selected database already contains base tables. It never drops tables. The SQL scripts do not issue `CREATE DATABASE` or `USE`; the connection selects the target database. `01_schema.sql` is for a newly created empty database only.
+
+For a production schema initialization, set `ALLOW_FRESH_SCHEMA=true` only for the one-time run against the new empty database, then remove it. Do not set it for normal application runtime.
+
+Optional fictional development fixtures can be loaded separately, once, into an empty schema:
+
+```powershell
+npm run db:seed
+npm run db:views
+npm run db:diagnostics
+```
+
+The seed creates no administrator or password-enabled account. Fixture users have empty password hashes, so password login is intentionally unavailable for those accounts. Local demo OTP can create a development user. Diagnostics are read-only SELECTs and do not automatically assert that results are empty.
+
+For an existing database created from the earlier Parko schema, do not run `01_schema.sql`. First inspect its schema and take a verified backup. `database/06_add_booking_lifecycle_columns.sql` is an optional one-time additive migration for the two durable booking timestamps and their expiry index. It is not run by startup or any package script; apply it only after confirming the target is the prior application schema and the columns/index are absent. The teammate schema has additional incompatibilities and is not repaired by this migration.
+
+Start the API and frontend in separate terminals from the repository root:
+
+```powershell
+npm run server
+```
+
+```powershell
+npm run client
+```
+
+The API listens at `http://localhost:5000`; Vite serves `http://localhost:5173` and proxies relative `/api` requests to the API.
+
+## Build and tests
+
+```powershell
 npm run build
-npm run start   # or npm run dev
+npm test
 ```
-Accessible at: `http://localhost:5000`
 
-### 2. Start the Frontend Application:
+These commands compile both apps and run database-free SQL contract tests. They do not connect to MySQL. The API workflow test mutates data and is intentionally separate:
+
 ```powershell
-cd client
-npm install
-npm run dev
+$env:RUN_MUTATING_API_TESTS = "true"
+$env:NODE_ENV = "development"
+$env:API_TEST_BASE_URL = "http://localhost:5000"
+$env:ADMIN_USER_ID = "7"
+$env:API_TEST_ADMIN_PHONE = "<phone-for-seed-user-7>"
+$env:API_TEST_HOST_PHONE = "<phone-for-seed-user-2>"
+npm run test:api
 ```
-Accessible at: `http://localhost:5173`
 
----
+Run it only against a disposable, isolated database initialized with the optional seed and an API using those same test-only variables. It creates and updates bookings, payments, disputes, and listings. Do not point it at production or a personal database. The test OTP flow is simulated and local-only.
 
-## 6. Demonstration Accounts & Sign-In
+## Demo-only behavior
 
-### Simulated Phone + OTP Sign-in (Default)
-1. Navigate to `http://localhost:5173/login`.
-2. Under **Phone & Demo OTP**, enter any phone number (e.g., `+919876543210` or a new number).
-3. Click **Get Demo Code**. The backend generates an on-screen single-use demo code valid for 5 minutes.
-4. Click **Sign In with OTP** to authenticate.
+- Phone OTP is simulated, in-memory, returns the code to the local UI, sends no SMS, and is disabled when `NODE_ENV=production`.
+- Payment is simulated, has no payment provider, and is disabled when `NODE_ENV=production`.
+- Do not describe either as production authentication or payment processing. Integrate a real OTP provider and payment gateway before enabling those production workflows.
+- Booking hold deadlines and confirmation timestamps are persisted in MySQL. The API checks for expired holds before serving API requests; in-memory timers only provide best-effort prompt updates.
+- Precise location and access details require a successful payment record and an active release/expiry window.
 
-### Seeded Administrator Account
-- **Email**: `admin@parko.com`
-- **Password**: `password123`
-- Tied to `user_id = 1` via backend `DEMO_ADMIN_USER_ID`. Grants access to `/admin` (Platform metrics, listing approvals, user verifications, disputes resolution).
+## Environment variables
 
-### Seeded Demo Owner & Driver Accounts
-- **Host / Owner Kavitha**: `kavitha@parko.com` / `password123` (Phone: `+919876543211`)
-- **Host / Owner Rajesh**: `rajesh@parko.com` / `password123` (Phone: `+919876543212`)
-- **Driver Suresh**: `suresh@parko.com` / `password123` (Phone: `+919876543214`)
+All application variables are server-side. Do not prefix database credentials or `JWT_SECRET` with `VITE_`.
 
----
+Required: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`. Production also requires `DB_SSL=true`. `DB_SSL_CA` may contain the database provider's CA certificate when required. `ADMIN_USER_ID` is optional, but must identify a trusted provisioned admin account to enable admin routes and listing review. `CLIENT_URL` is optional for local cross-origin development; same-origin production requests do not need CORS. `NODE_ENV` and `PORT` have application defaults, but production must set `NODE_ENV=production`.
 
-## 7. Complete Demonstration Flow
+For compatibility with an existing local `.env`, `DEMO_ADMIN_USER_ID` is temporarily accepted as a deprecated alias for `ADMIN_USER_ID`; new setups should use only `ADMIN_USER_ID`.
 
-1. **Guest Discovery & Welcome Overlay**:
-   - Open `http://localhost:5173/`.
-   - The welcome modal appears over the interactive Leaflet map.
-   - Click **Find your parking** to dismiss.
-   - Browse the split-screen view: filter by vehicle category, price slider, and instant booking mode.
-2. **Pre-Booking Exact Route Disclosure**:
-   - Select any parking space and click **Book Now**.
-   - Authenticate (via OTP or password).
-   - Once authenticated, the pre-booking map discloses the exact route destination coordinates without revealing private gate codes or text addresses.
-3. **Instant Booking & Checkout Hold**:
-   - Select duration and click **Reserve & Proceed**.
-   - The slot enters `pending_payment` and a 3-minute checkout timer starts.
-   - Click **Complete Demo Payment**.
-   - The backend runs a database transaction: records `PAYMENT_ATTEMPT`, updates `BOOKING` to `confirmed`, and creates `BOOKING_ACCESS_DETAIL`.
-4. **Post-Confirmation Access Details**:
-   - Navigate to **My Bookings**.
-   - Click **Access Details** to view the unlocked exact street address, keypad instructions, and host notes.
-5. **Owner Workspace**:
-   - Navigate to **Owner View**.
-   - View listing statuses, approve/decline incoming booking requests, or launch the 4-step **List your space** wizard.
-6. **Admin Portal**:
-   - Sign in as `admin@parko.com` and click **Admin Portal**.
-   - Review pending listings, inspect protected private coordinates, approve or suspend spaces, and resolve disputes or owner-cancellation requests.
+The example file contains placeholders only. Configure production variables in Vercel project settings, scoped to the server service and appropriate environments. Do not commit `.env`, certificates, database dumps, cookies, or credentials.
+
+## Fresh database and safety
+
+The five SQL files are ordered by purpose, not an automatic migration chain:
+
+1. `database/01_schema.sql`: create the 12 lowercase InnoDB tables in an already-created empty database.
+2. `database/02_seed.sql`: optional fictional development data only; explicit IDs mean it is a one-time import.
+3. `database/03_queries.sql`: read-only query examples.
+4. `database/04_views.sql`: reporting views; safe to reapply with `CREATE OR REPLACE VIEW`.
+5. `database/05_tests.sql`: read-only diagnostic queries; inspect their result sets manually.
+
+Never run the fresh-schema setup against a database containing data. It intentionally refuses non-empty databases, but take a verified backup before any database operation. This project does not currently include a data migration from the older `parko_db` schema or the untracked SQL dumps.
+
+## Vercel: one public domain
+
+The root `vercel.json` defines two Vercel Services (currently Beta): the Vite client and Express server. Both are in one Vercel project. Top-level rewrites send `/api` and `/api/*` to the server service and all other paths to the client service. Service routing preserves the original `/api/...` path expected by Express. The client service has an SPA fallback to `index.html` for routes such as `/login` and `/owner`.
+
+1. Import the existing GitHub repository as a new Vercel project, using the repository root as the project root so the root `vercel.json` is applied.
+2. Confirm the project supports/enables Vercel Services and that service roots resolve to `client/` and `server/`.
+3. Configure the production/preview server variables in Vercel. For remote MySQL, use a reachable managed MySQL instance, set `DB_SSL=true`, and provide its CA if required. Use separate preview credentials/database; do not point previews at production data.
+4. Deploy a Preview and verify build logs, `/`, deep links (`/login`, `/owner`), `/api/health`, authentication cookie behavior, and database-backed flows. Demo OTP and simulated payments intentionally return 503 in production.
+5. Add `parko.adityasaraf.com` to the Vercel project and apply the DNS records Vercel displays. The browser and API remain under this same hostname.
+6. Promote only after Preview checks and database checks pass. No hosted deployment or DNS changes are performed by this repository.
+
+Vercel Services are Beta. Confirm current availability and behavior in the target Vercel project before committing to this layout. No hosted deployment has been verified by these instructions.
+
+## Rollback
+
+Before production schema work, take and verify a restorable database backup. Prefer forward-only additive DB changes; do not couple a code rollback to destructive schema rollback. Vercel can roll back/promote a prior deployment from the project's deployment controls. If a deployment fails, restore the previous deployment and keep the database intact; investigate the schema separately before retrying.

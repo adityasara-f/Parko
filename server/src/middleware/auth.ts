@@ -2,9 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { pool } from '../config/database';
 import { RowDataPacket } from 'mysql2';
+import { env, isAdminUserId } from '../config/env';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'parko_super_secure_jwt_secret_token_2026_demo';
-const DEMO_ADMIN_USER_ID = Number(process.env.DEMO_ADMIN_USER_ID || 1);
+const JWT_SECRET = env.jwtSecret;
 
 export interface AuthenticatedUser {
   user_id: number;
@@ -36,7 +36,7 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { user_id: number };
     const [rows] = await pool.execute<RowDataPacket[]>(
-      'SELECT user_id, name, email, phone, account_status FROM USER WHERE user_id = ?',
+      'SELECT user_id, name, email, phone, account_status FROM `user` WHERE user_id = ?',
       [decoded.user_id]
     );
 
@@ -55,7 +55,7 @@ export async function authenticateToken(req: AuthRequest, res: Response, next: N
       email: user.email,
       phone: user.phone,
       account_status: user.account_status,
-      is_admin: user.user_id === DEMO_ADMIN_USER_ID
+      is_admin: isAdminUserId(user.user_id)
     };
 
     next();
@@ -80,7 +80,7 @@ export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { user_id: number };
     pool.execute<RowDataPacket[]>(
-      'SELECT user_id, name, email, phone, account_status FROM USER WHERE user_id = ?',
+      'SELECT user_id, name, email, phone, account_status FROM `user` WHERE user_id = ?',
       [decoded.user_id]
     ).then(([rows]) => {
       if (rows.length > 0 && rows[0].account_status !== 'suspended') {
@@ -91,7 +91,7 @@ export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction
           email: user.email,
           phone: user.phone,
           account_status: user.account_status,
-          is_admin: user.user_id === DEMO_ADMIN_USER_ID
+          is_admin: isAdminUserId(user.user_id)
         };
       }
       next();

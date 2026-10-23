@@ -3,6 +3,7 @@ import { pool } from '../config/database';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 import { BookingHoldManager } from '../services/holdManager';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { env } from '../config/env';
 
 const router = Router();
 
@@ -51,7 +52,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // 1. Verify space exists and is approved, lock row
     const [spaces] = await connection.execute<RowDataPacket[]>(
       `SELECT space_id, host_user_id, hourly_rate, approval_mode, listing_status 
-       FROM PARKING_SPACE 
+      FROM parking_space
        WHERE space_id = ? FOR UPDATE`,
       [spaceId]
     );
@@ -85,7 +86,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     if (activeAvailabilityId) {
       const [windows] = await connection.execute<RowDataPacket[]>(
         `SELECT availability_id, start_time, end_time, availability_status 
-         FROM AVAILABILITY_WINDOW 
+         FROM availability_window
          WHERE availability_id = ? AND space_id = ? FOR UPDATE`,
         [activeAvailabilityId, spaceId]
       );
@@ -101,7 +102,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     if (!windowRecord) {
       const [matching] = await connection.execute<RowDataPacket[]>(
         `SELECT availability_id, start_time, end_time, availability_status 
-         FROM AVAILABILITY_WINDOW 
+         FROM availability_window
          WHERE space_id = ? 
            AND availability_status = 'available'
            AND start_time <= ? 
@@ -126,7 +127,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
     // 3. Concurrency check: Ensure no overlapping active booking exists
     const [overlaps] = await connection.execute<RowDataPacket[]>(
-      `SELECT booking_id FROM BOOKING
+      `SELECT booking_id FROM booking
        WHERE space_id = ?
          AND booking_status IN ('pending_approval', 'pending_payment', 'confirmed', 'cancellation_requested')
          AND NOT (end_time <= ? OR start_time >= ?)
@@ -145,14 +146,16 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     const isInstant = space.approval_mode === 'instant';
     const bookingType = isInstant ? 'instant' : 'owner_approved';
     const initialStatus = isInstant ? 'pending_payment' : 'pending_approval';
+    const approvalDuration = space.approval_mode === 'manual_5min' ? 5 : (space.approval_mode === 'manual_10min' ? 10 : 30);
+    const holdMinutes = isInstant ? 3 : approvalDuration;
 
     // 5. Insert Booking
     const [insertResult] = await connection.execute<ResultSetHeader>(
-      `INSERT INTO BOOKING (
+      `INSERT INTO booking (
         space_id, driver_user_id, availability_id, start_time, end_time,
-        booking_type, booking_status, amount, currency
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'INR')`,
-      [spaceId, driverId, activeAvailabilityId, formattedStart, formattedEnd, bookingType, initialStatus, totalAmount]
+        booking_type, booking_status, amount, currency, hold_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'INR', DATE_ADD(NOW(), INTERVAL ? MINUTE))`,
+      [spaceId, driverId, activeAvailabilityId, formattedStart, formattedEnd, bookingType, initialStatus, totalAmount, holdMinutes]
     );
 
     const bookingId = insertResult.insertId;
@@ -165,7 +168,6 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       BookingHoldManager.registerCheckoutHold(bookingId, 3);
     } else {
       // Owner approval window
-      const approvalDuration = space.approval_mode === 'manual_5min' ? 5 : (space.approval_mode === 'manual_10min' ? 10 : 30);
       BookingHoldManager.registerApprovalHold(bookingId, approvalDuration);
     }
 
@@ -180,7 +182,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         currency: 'INR',
         start_time: startTime,
         end_time: endTime,
-        hold_seconds: isInstant ? 180 : (space.approval_mode === 'manual_5min' ? 300 : (space.approval_mode === 'manual_10min' ? 600 : 1800))
+        hold_seconds: holdMinutes * 60
       }
     });
 
@@ -215,10 +217,10 @@ router.get('/my', authenticateToken, async (req: AuthRequest, res: Response) => 
         pa.payment_status,
         pa.payment_reference,
         r.review_id AS driver_review_id
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
-       LEFT JOIN PAYMENT_ATTEMPT pa ON b.booking_id = pa.booking_id
-       LEFT JOIN REVIEW r ON b.booking_id = r.booking_id AND r.reviewer_user_id = b.driver_user_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
+      LEFT JOIN payment_attempt pa ON b.booking_id = pa.booking_id
+      LEFT JOIN review r ON b.booking_id = r.booking_id AND r.reviewer_user_id = b.driver_user_id
        WHERE b.driver_user_id = ?
        ORDER BY b.booking_id DESC`,
       [req.user!.user_id]
@@ -255,9 +257,9 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
         b.cancellation_reason,
         pa.payment_status,
         pa.payment_reference
-       FROM BOOKING b
-       JOIN PARKING_SPACE ps ON b.space_id = ps.space_id
-       LEFT JOIN PAYMENT_ATTEMPT pa ON b.booking_id = pa.booking_id
+      FROM booking b
+      JOIN parking_space ps ON b.space_id = ps.space_id
+      LEFT JOIN payment_attempt pa ON b.booking_id = pa.booking_id
        WHERE b.booking_id = ?`,
       [id]
     );
@@ -273,7 +275,7 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
       return res.status(403).json({ success: false, error: 'Unauthorized to view this booking' });
     }
 
-    const remainingSecs = BookingHoldManager.getRemainingSeconds(Number(id));
+    const remainingSecs = await BookingHoldManager.getRemainingSeconds(Number(id));
 
     return res.json({
       success: true,
@@ -290,9 +292,16 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 
 // Complete Simulated Payment & Confirm Booking Atomically
 router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Response) => {
+  if (env.nodeEnv === 'production') {
+    return res.status(503).json({ success: false, error: 'Demo payments are disabled in production' });
+  }
+
   const { id } = req.params;
   const driverId = req.user!.user_id;
   const { paymentMethod = 'upi' } = req.body;
+  if (!['upi', 'card', 'net_banking'].includes(paymentMethod)) {
+    return res.status(400).json({ success: false, error: 'Unsupported payment method' });
+  }
 
   const connection = await pool.getConnection();
 
@@ -302,7 +311,7 @@ router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Respons
     // 1. Lock and verify booking
     const [bookings] = await connection.execute<RowDataPacket[]>(
       `SELECT booking_id, space_id, driver_user_id, amount, currency, booking_status, start_time, end_time
-       FROM BOOKING 
+      FROM booking
        WHERE booking_id = ? FOR UPDATE`,
       [id]
     );
@@ -329,7 +338,7 @@ router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Respons
 
     // 2. Re-validate slot conflict before confirming
     const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT booking_id FROM BOOKING
+      `SELECT booking_id FROM booking
        WHERE space_id = ?
          AND booking_id != ?
          AND booking_status = 'confirmed'
@@ -346,20 +355,20 @@ router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Respons
     // 3. Create simulated payment record
     const paymentRef = `PAY_DEMO_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
     await connection.execute(
-      `INSERT INTO PAYMENT_ATTEMPT (booking_id, amount, currency, payment_method, payment_status, payment_reference)
+      `INSERT INTO payment_attempt (booking_id, amount, currency, payment_method, payment_status, payment_reference)
        VALUES (?, ?, ?, ?, 'successful', ?)`,
       [id, booking.amount, booking.currency, paymentMethod, paymentRef]
     );
 
     // 4. Update booking status to confirmed
     await connection.execute(
-      `UPDATE BOOKING SET booking_status = 'confirmed' WHERE booking_id = ?`,
+      `UPDATE booking SET booking_status = 'confirmed', confirmed_at = NOW(), hold_expires_at = NULL WHERE booking_id = ?`,
       [id]
     );
 
     // 5. Populate BOOKING_ACCESS_DETAIL from host's private location notes
     const [privateLoc] = await connection.execute<RowDataPacket[]>(
-      `SELECT exact_address, private_notes FROM PRIVATE_SPACE_LOCATION WHERE space_id = ?`,
+      `SELECT exact_address, private_notes FROM private_space_location WHERE space_id = ?`,
       [booking.space_id]
     );
 
@@ -369,7 +378,7 @@ router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Respons
 
     // Release at: 1 hour before start, Expiry at: 1 hour after end
     await connection.execute(
-      `INSERT INTO BOOKING_ACCESS_DETAIL (booking_id, access_instructions, release_at, expiry_at)
+      `INSERT INTO booking_access_detail (booking_id, access_instructions, release_at, expiry_at)
        VALUES (?, ?, DATE_SUB(?, INTERVAL 1 HOUR), DATE_ADD(?, INTERVAL 1 HOUR))
        ON DUPLICATE KEY UPDATE access_instructions = VALUES(access_instructions)`,
       [id, accessNotes, booking.start_time, booking.end_time]
@@ -377,9 +386,8 @@ router.post('/:id/pay', authenticateToken, async (req: AuthRequest, res: Respons
 
     await connection.commit();
 
-    // Clear runtime hold timer and record confirmation time for 2-minute cancellation grace period
+    // Clear the optional runtime timer; confirmation time is persisted in the database.
     BookingHoldManager.clearHold(Number(id));
-    BookingHoldManager.recordConfirmation(Number(id));
 
     return res.json({
       success: true,
@@ -414,8 +422,8 @@ router.post('/:id/cancel', authenticateToken, async (req: AuthRequest, res: Resp
     await connection.beginTransaction();
 
     const [bookings] = await connection.execute<RowDataPacket[]>(
-      `SELECT booking_id, driver_user_id, start_time, booking_status 
-       FROM BOOKING 
+      `SELECT booking_id, driver_user_id, start_time, booking_status, confirmed_at
+       FROM booking
        WHERE booking_id = ? FOR UPDATE`,
       [id]
     );
@@ -435,7 +443,7 @@ router.post('/:id/cancel', authenticateToken, async (req: AuthRequest, res: Resp
     if (booking.booking_status === 'pending_approval' || booking.booking_status === 'pending_payment') {
       // Direct cancellation of pending request/hold
       await connection.execute(
-        `UPDATE BOOKING SET booking_status = 'cancelled', cancellation_reason = ? WHERE booking_id = ?`,
+        `UPDATE booking SET booking_status = 'cancelled', cancellation_reason = ?, hold_expires_at = NULL WHERE booking_id = ?`,
         [reason, id]
       );
       BookingHoldManager.clearHold(Number(id));
@@ -447,7 +455,8 @@ router.post('/:id/cancel', authenticateToken, async (req: AuthRequest, res: Resp
       const now = new Date();
       const startTime = new Date(booking.start_time);
       const hoursUntilStart = (startTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-      const isWithinGrace = BookingHoldManager.isWithinConfirmationGracePeriod(Number(id), 2);
+      const confirmedAt = booking.confirmed_at ? new Date(booking.confirmed_at).getTime() : 0;
+      const isWithinGrace = confirmedAt > 0 && now.getTime() - confirmedAt <= 2 * 60 * 1000;
 
       let cancellationPolicyNote = 'Standard Cancellation';
 
@@ -462,13 +471,13 @@ router.post('/:id/cancel', authenticateToken, async (req: AuthRequest, res: Resp
       const fullReason = `${cancellationPolicyNote} - ${reason}`;
 
       await connection.execute(
-        `UPDATE BOOKING SET booking_status = 'cancelled', cancellation_reason = ? WHERE booking_id = ?`,
+        `UPDATE booking SET booking_status = 'cancelled', cancellation_reason = ?, hold_expires_at = NULL WHERE booking_id = ?`,
         [fullReason, id]
       );
 
       // Also mark payment as refunded in simulation
       await connection.execute(
-        `UPDATE PAYMENT_ATTEMPT SET payment_status = 'refunded' WHERE booking_id = ?`,
+        `UPDATE payment_attempt SET payment_status = 'refunded' WHERE booking_id = ?`,
         [id]
       );
 
@@ -506,10 +515,16 @@ router.get('/:id/access', authenticateToken, async (req: AuthRequest, res: Respo
         psl.precise_latitude,
         psl.precise_longitude,
         psl.private_notes
-       FROM BOOKING b
-       JOIN BOOKING_ACCESS_DETAIL bad ON b.booking_id = bad.booking_id
-       JOIN PRIVATE_SPACE_LOCATION psl ON b.space_id = psl.space_id
-       WHERE b.booking_id = ?`,
+       FROM booking b
+       JOIN booking_access_detail bad ON b.booking_id = bad.booking_id
+       JOIN private_space_location psl ON b.space_id = psl.space_id
+       WHERE b.booking_id = ?
+         AND bad.release_at <= NOW()
+         AND bad.expiry_at > NOW()
+         AND EXISTS (
+           SELECT 1 FROM payment_attempt pa
+           WHERE pa.booking_id = b.booking_id AND pa.payment_status = 'successful'
+         )`,
       [id]
     );
 

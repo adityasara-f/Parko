@@ -1,13 +1,15 @@
 const http = require('http');
 
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = process.env.API_TEST_BASE_URL || 'http://localhost:5000';
+const ADMIN_PHONE = process.env.API_TEST_ADMIN_PHONE;
+const HOST_PHONE = process.env.API_TEST_HOST_PHONE;
 
 function request(method, path, body = null, token = null) {
   return new Promise((resolve, reject) => {
     const url = new URL(path, BASE_URL);
     const headers = { 'Content-Type': 'application/json' };
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      headers.Cookie = token;
     }
 
     const payload = body ? JSON.stringify(body) : null;
@@ -21,9 +23,9 @@ function request(method, path, body = null, token = null) {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          resolve({ status: res.statusCode, body: parsed });
+          resolve({ status: res.statusCode, body: parsed, headers: res.headers });
         } catch {
-          resolve({ status: res.statusCode, body: data });
+          resolve({ status: res.statusCode, body: data, headers: res.headers });
         }
       });
     });
@@ -34,8 +36,33 @@ function request(method, path, body = null, token = null) {
   });
 }
 
+function getAuthCookie(response) {
+  const cookies = response.headers?.['set-cookie'] || [];
+  const authCookie = cookies.find((cookie) => cookie.startsWith('parko_token='));
+  return authCookie ? authCookie.split(';', 1)[0] : null;
+}
+
+async function signInWithDemoOtp(phone) {
+  const requested = await request('POST', '/api/auth/otp/request', { phone });
+  if (requested.status !== 200 || !requested.body.demo_otp) return { response: requested };
+  const response = await request('POST', '/api/auth/otp/verify', {
+    phone,
+    code: requested.body.demo_otp
+  });
+  return { response, cookie: getAuthCookie(response) };
+}
+
 async function runTests() {
-  console.log('🚀 Running Comprehensive Parko End-to-End API Test Suite...\n');
+  if (process.env.RUN_MUTATING_API_TESTS !== 'true' || process.env.NODE_ENV === 'production') {
+    console.error('Refusing mutating API workflow tests. Opt in on a disposable non-production environment.');
+    process.exit(2);
+  }
+  if (!ADMIN_PHONE || !HOST_PHONE) {
+    console.error('Missing API_TEST_ADMIN_PHONE or API_TEST_HOST_PHONE.');
+    process.exit(2);
+  }
+
+  console.log('Running opt-in Parko API workflow tests.');
   let passed = 0;
   let total = 0;
 
@@ -67,29 +94,17 @@ async function runTests() {
     // 2. Authentication
     console.log('\n--- 2. Authentication (Phone OTP & Email) ---');
     const phone = '9876543210';
-    const otpReq = await request('POST', '/api/auth/otp/request', { phone });
-    assert(otpReq.status === 200 && otpReq.body.demo_otp, `Phone OTP requested, received demo OTP: ${otpReq.body.demo_otp}`);
+    const driverLogin = await signInWithDemoOtp(phone);
+    const driverToken = driverLogin.cookie;
+    assert(driverLogin.response.status === 200 && driverToken, 'Driver OTP session cookie set');
 
-    const otpVerify = await request('POST', '/api/auth/otp/verify', { phone, code: otpReq.body.demo_otp });
-    assert(otpVerify.status === 200 && otpVerify.body.token, 'OTP verified, JWT token issued');
-    const driverToken = otpVerify.body.token;
-    const driverUserId = otpVerify.body.user.user_id;
+    const adminLogin = await signInWithDemoOtp(ADMIN_PHONE);
+    const adminToken = adminLogin.cookie;
+    assert(adminLogin.response.status === 200 && adminLogin.response.body.user.is_admin === true, 'Configured admin OTP session verified');
 
-    // Login as Admin
-    const adminLogin = await request('POST', '/api/auth/login', {
-      email: 'admin@parko.com',
-      password: 'password123'
-    });
-    assert(adminLogin.status === 200 && adminLogin.body.user.is_admin === true, 'Admin login verified (is_admin: true)');
-    const adminToken = adminLogin.body.token;
-
-    // Login as Host (User 2: Kavitha)
-    const hostLogin = await request('POST', '/api/auth/login', {
-      email: 'kavitha@parko.com',
-      password: 'password123'
-    });
-    assert(hostLogin.status === 200, 'Host login verified (kavitha@parko.com)');
-    const hostToken = hostLogin.body.token;
+    const hostLogin = await signInWithDemoOtp(HOST_PHONE);
+    const hostToken = hostLogin.cookie;
+    assert(hostLogin.response.status === 200 && hostToken, 'Host OTP session cookie set');
 
     // 3. Security & Access Control
     console.log('\n--- 3. Security & Access Control ---');
@@ -108,14 +123,14 @@ async function runTests() {
 
     // 4. Immediate Parking Rule (manual_30min rejection)
     console.log('\n--- 4. Immediate Parking Rule ---');
-    // Space 8 has approval_mode = 'manual_30min'. Booking starting in 5 minutes must be rejected
+    // Seed space 1 has approval_mode = 'manual_30min'.
     const now = new Date();
     const immediateStart = new Date(now.getTime() + 5 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
     const immediateEnd = new Date(now.getTime() + 65 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
     const immediateBookingAttempt = await request('POST', '/api/bookings', {
-      space_id: 8,
-      availability_id: 12,
+      space_id: 1,
+      availability_id: 1,
       start_time: immediateStart,
       end_time: immediateEnd
     }, driverToken);
@@ -124,7 +139,7 @@ async function runTests() {
 
     // 5. Complete Instant Booking, Concurrency & Payment Flow
     console.log('\n--- 5. Instant Booking, Hold & Demo Payment ---');
-    // Book tomorrow 10:00 to 12:00 on Space 1 (instant)
+    // Book tomorrow 10:00 to 12:00 on seed space 2 (instant).
     const tmrw = new Date();
     tmrw.setDate(tmrw.getDate() + 1);
     const dateStr = tmrw.toISOString().slice(0, 10);
@@ -132,7 +147,7 @@ async function runTests() {
     const bookEnd = `${dateStr} 12:00:00`;
 
     const instantBookingRes = await request('POST', '/api/bookings', {
-      space_id: 1,
+      space_id: 2,
       availability_id: 2,
       start_time: bookStart,
       end_time: bookEnd
@@ -144,7 +159,7 @@ async function runTests() {
 
     // Overlapping booking attempt (concurrency test)
     const overlapRes = await request('POST', '/api/bookings', {
-      space_id: 1,
+      space_id: 2,
       availability_id: 2,
       start_time: `${dateStr} 11:00:00`,
       end_time: `${dateStr} 13:00:00`
@@ -161,8 +176,8 @@ async function runTests() {
 
     // Access instructions disclosure
     const accessRes = await request('GET', `/api/bookings/${bookingId}/access`, null, driverToken);
-    assert(accessRes.status === 200 && (accessRes.body.access_instructions || accessRes.body.access?.access_instructions), 
-      `Driver retrieved access instructions: "${accessRes.body.access_instructions || accessRes.body.access?.access_instructions}"`);
+    assert(accessRes.status === 200 && (accessRes.body.access_instructions || accessRes.body.access?.access_instructions),
+      'Driver retrieved authorized access instructions');
 
     const unauthAccessRes = await request('GET', `/api/bookings/${bookingId}/access`, null, hostToken);
     assert(unauthAccessRes.status === 403, 'Unrelated user cannot access booking access details (HTTP 403)');
@@ -206,10 +221,9 @@ async function runTests() {
     // 8. Mutual Reviews
     console.log('\n--- 8. Mutual Reviews & Limits ---');
     // Seed booking 1 is completed. Check review submission:
-    // User 5 (Suresh) and User 2 (Kavitha) already reviewed Booking 1.
-    // Try duplicate review by User 2 on Booking 1
+    // User 2 has already reviewed completed seed booking 2.
     const dupReview = await request('POST', '/api/reviews', {
-      bookingId: 1,
+      bookingId: 2,
       rating: 5,
       comment: 'Attempting duplicate review'
     }, hostToken);
@@ -229,10 +243,10 @@ async function runTests() {
       city_id: 1,
       approximate_latitude: 12.9205,
       approximate_longitude: 79.1325,
-      exact_address: '14 Fort View Enclave, South Rampart Road, Vellore',
+      exact_address: 'Demo private address for disposable test data',
       precise_latitude: 12.92048,
       precise_longitude: 79.13249,
-      private_notes: 'Keypad next to black wicket gate. Code: 7712#',
+      private_notes: 'Demo access note for disposable test data',
       windows: [
         { start_time: `${dateStr} 08:00:00`, end_time: `${dateStr} 20:00:00` }
       ]

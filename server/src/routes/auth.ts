@@ -4,10 +4,10 @@ import jwt from 'jsonwebtoken';
 import { pool } from '../config/database';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { env, isAdminUserId } from '../config/env';
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'parko_super_secure_jwt_secret_token_2026_demo';
-const DEMO_ADMIN_USER_ID = Number(process.env.DEMO_ADMIN_USER_ID || 1);
+const JWT_SECRET = env.jwtSecret;
 
 // In-memory OTP storage for simulated demo phone authentication
 interface OtpEntry {
@@ -19,6 +19,10 @@ const otpStore = new Map<string, OtpEntry>();
 
 // Request Demo OTP (simulated phone login)
 router.post('/otp/request', async (req: Request, res: Response) => {
+  if (env.nodeEnv === 'production') {
+    return res.status(503).json({ success: false, error: 'Demo OTP is disabled in production' });
+  }
+
   const { phone } = req.body;
   if (!phone || phone.length < 8) {
     return res.status(400).json({ success: false, error: 'Valid phone number is required' });
@@ -32,7 +36,7 @@ router.post('/otp/request', async (req: Request, res: Response) => {
 
   try {
     const [existing] = await pool.execute<RowDataPacket[]>(
-      'SELECT user_id, name FROM USER WHERE phone = ?',
+      'SELECT user_id, name FROM `user` WHERE phone = ?',
       [phone]
     );
 
@@ -60,6 +64,10 @@ router.post('/otp/request', async (req: Request, res: Response) => {
 
 // Verify Demo OTP and Sign In / Register
 router.post('/otp/verify', async (req: Request, res: Response) => {
+  if (env.nodeEnv === 'production') {
+    return res.status(503).json({ success: false, error: 'Demo OTP is disabled in production' });
+  }
+
   const { phone, code, name } = req.body;
 
   if (!phone || !code) {
@@ -86,7 +94,7 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
   try {
     // Check if user exists by phone
     const [rows] = await pool.execute<RowDataPacket[]>(
-      'SELECT user_id, name, email, phone, account_status FROM USER WHERE phone = ?',
+      'SELECT user_id, name, email, phone, account_status FROM `user` WHERE phone = ?',
       [phone]
     );
 
@@ -101,19 +109,17 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
       // Auto-register new phone user
       const defaultEmail = `user_${Date.now()}@parko-demo.com`;
       const defaultName = name || `User ${phone.slice(-4)}`;
-      const dummyHash = await bcrypt.hash('parko_phone_auth', 10);
-
       const [insertRes] = await pool.execute<ResultSetHeader>(
-        `INSERT INTO USER (name, email, phone, password_hash, account_status)
+        `INSERT INTO \`user\` (name, email, phone, password_hash, account_status)
          VALUES (?, ?, ?, ?, 'active')`,
-        [defaultName, defaultEmail, phone, dummyHash]
+        [defaultName, defaultEmail, phone, '']
       );
 
       const newUserId = insertRes.insertId;
 
       // Persist phone verification in USER_VERIFICATION
       await pool.execute(
-        `INSERT INTO USER_VERIFICATION (user_id, verification_type, verification_status, verified_at)
+        `INSERT INTO user_verification (user_id, verification_type, verification_status, verified_at)
          VALUES (?, 'phone_otp', 'verified', NOW())`,
         [newUserId]
       );
@@ -131,17 +137,16 @@ router.post('/otp/verify', async (req: Request, res: Response) => {
 
     res.cookie('parko_token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: env.nodeEnv === 'production',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
     return res.json({
       success: true,
-      token,
       user: {
         ...user,
-        is_admin: user.user_id === DEMO_ADMIN_USER_ID
+        is_admin: isAdminUserId(user.user_id)
       }
     });
   } catch (err: any) {
@@ -160,7 +165,7 @@ router.post('/register', async (req: Request, res: Response) => {
 
   try {
     const [existing] = await pool.execute<RowDataPacket[]>(
-      'SELECT user_id FROM USER WHERE email = ?',
+      'SELECT user_id FROM `user` WHERE email = ?',
       [email]
     );
 
@@ -171,7 +176,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const password_hash = await bcrypt.hash(password, 10);
 
     const [insertRes] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO USER (name, email, phone, password_hash, account_status)
+      `INSERT INTO \`user\` (name, email, phone, password_hash, account_status)
        VALUES (?, ?, ?, ?, 'active')`,
       [name, email, phone, password_hash]
     );
@@ -180,8 +185,8 @@ router.post('/register', async (req: Request, res: Response) => {
 
     // Record initial phone verification
     await pool.execute(
-      `INSERT INTO USER_VERIFICATION (user_id, verification_type, verification_status, verified_at)
-       VALUES (?, 'email_confirmation', 'verified', NOW())`,
+      `INSERT INTO user_verification (user_id, verification_type, verification_status, verified_at)
+       VALUES (?, 'email_confirmation', 'pending', NULL)`,
       [userId]
     );
 
@@ -189,21 +194,20 @@ router.post('/register', async (req: Request, res: Response) => {
 
     res.cookie('parko_token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: env.nodeEnv === 'production',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
     return res.json({
       success: true,
-      token,
       user: {
         user_id: userId,
         name,
         email,
         phone,
         account_status: 'active',
-        is_admin: userId === DEMO_ADMIN_USER_ID
+        is_admin: isAdminUserId(userId)
       }
     });
   } catch (err) {
@@ -222,7 +226,7 @@ router.post('/login', async (req: Request, res: Response) => {
 
   try {
     const [rows] = await pool.execute<RowDataPacket[]>(
-      'SELECT user_id, name, email, phone, password_hash, account_status FROM USER WHERE email = ?',
+      'SELECT user_id, name, email, phone, password_hash, account_status FROM `user` WHERE email = ?',
       [email]
     );
 
@@ -236,7 +240,7 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(403).json({ success: false, error: 'Account has been suspended' });
     }
 
-    const match = await bcrypt.compare(password, user.password_hash);
+    const match = Boolean(user.password_hash) && await bcrypt.compare(password, user.password_hash);
     if (!match) {
       return res.status(401).json({ success: false, error: 'Invalid email or password' });
     }
@@ -245,21 +249,20 @@ router.post('/login', async (req: Request, res: Response) => {
 
     res.cookie('parko_token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: env.nodeEnv === 'production',
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
     return res.json({
       success: true,
-      token,
       user: {
         user_id: user.user_id,
         name: user.name,
         email: user.email,
         phone: user.phone,
         account_status: user.account_status,
-        is_admin: user.user_id === DEMO_ADMIN_USER_ID
+        is_admin: isAdminUserId(user.user_id)
       }
     });
   } catch (err) {
@@ -278,7 +281,7 @@ router.post('/logout', (req: Request, res: Response) => {
 router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const [verifs] = await pool.execute<RowDataPacket[]>(
-      'SELECT verification_id, verification_type, verification_status, verified_at FROM USER_VERIFICATION WHERE user_id = ?',
+      'SELECT verification_id, verification_type, verification_status, verified_at FROM user_verification WHERE user_id = ?',
       [req.user!.user_id]
     );
 
@@ -301,7 +304,7 @@ router.put('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
 
   try {
     await pool.execute(
-      'UPDATE USER SET name = ?, phone = ? WHERE user_id = ?',
+      'UPDATE `user` SET name = ?, phone = ? WHERE user_id = ?',
       [name, phone, req.user!.user_id]
     );
 
