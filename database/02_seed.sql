@@ -1,5 +1,6 @@
 -- Optional fictional development fixtures. Run only once in an empty database.
 -- Empty password_hash values are intentionally unusable for password login.
+
 START TRANSACTION;
 
 INSERT INTO `user` (user_id, name, email, phone, password_hash, account_status, created_at) VALUES

@@ -1,8 +1,8 @@
-
 -- Run only against a newly created, empty database selected by the client.
 -- This file never creates, drops, or selects a database.
 
-CREATE TABLE `user` (
+
+CREATE TABLE user (
   user_id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   name VARCHAR(120) NOT NULL,
   email VARCHAR(254) NOT NULL,
